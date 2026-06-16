@@ -101,6 +101,25 @@ command runs there first; with `blocking: true` the hook waits for it to finish
 before building anything else. After setup, that pane still runs its own
 `command`. Put the setup pane first so nothing spawns ahead of it.
 
+### Editor autocomplete
+
+The repo ships a JSON Schema ([`schema.json`](./schema.json)). Editors backed by
+the YAML Language Server — VS Code (Red Hat YAML extension), Neovim (`yamlls`),
+Helix, etc. — give you completion, hover docs, and validation when the file
+starts with this modeline (the bundled `config.example.yml` already includes it):
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json
+```
+
+Or map it without editing the file, e.g. in VS Code `settings.json`:
+
+```json
+"yaml.schemas": {
+  "https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json": "**/herdr-plugin-workspace-manager/config.yml"
+}
+```
+
 ## Actions
 
 ```sh

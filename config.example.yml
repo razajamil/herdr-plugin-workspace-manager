@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json
 # herdr-plugin-workspace-manager
 #
 # Copy this file to the plugin's config directory:

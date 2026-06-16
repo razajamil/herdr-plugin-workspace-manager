@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json",
+  "title": "herdr-plugin-workspace-manager config",
+  "description": "Declarative herdr tab/pane layouts with per-workspace defaults. Keep in sync with src/config.mjs.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "layouts": {
+      "type": "array",
+      "description": "Named tab/pane templates.",
+      "items": { "$ref": "#/$defs/layout" }
+    },
+    "workspaces": {
+      "type": "array",
+      "description": "Map a repo (or worktree path) to a default layout.",
+      "items": { "$ref": "#/$defs/workspace" }
+    }
+  },
+  "$defs": {
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "tabs"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique layout id, referenced by workspaces[].defaultLayout."
+        },
+        "setup": { "$ref": "#/$defs/setup" },
+        "tabs": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Tabs, walked in order. The first tab reuses the worktree's existing tab.",
+          "items": { "$ref": "#/$defs/tab" }
+        }
+      }
+    },
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "description": "Optional one-off command run on the single setup:true pane before the rest of the layout.",
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command to run on the setup:true pane (e.g. \"npm install\")."
+        },
+        "blocking": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, no further tabs/panes spawn until the setup command finishes."
+        }
+      }
+    },
+    "tab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["panes"],
+      "properties": {
+        "title": { "type": "string", "description": "Tab label." },
+        "panes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Panes in this tab. The first is the tab's root pane; each later pane splits from the previous one.",
+          "items": { "$ref": "#/$defs/pane" }
+        }
+      }
+    },
+    "pane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "description": "Pane label." },
+        "command": { "type": "string", "description": "Optional command to run in the pane." },
+        "setup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Marks the single pane that runs the layout's setup.command (at most one per layout)."
+        },
+        "split": {
+          "enum": ["vertical", "horizontal", "right", "down"],
+          "description": "For panes after the first: split direction relative to the previous pane. vertical=side by side (right), horizontal=stacked (down)."
+        },
+        "ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1,
+          "description": "Optional split ratio, between 0 and 1."
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Needs `repo` and/or `path`. A repo match wins over a path match.",
+      "anyOf": [{ "required": ["repo"] }, { "required": ["path"] }],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repo root (~ expanded) or bare repo name. Matches any linked worktree of that repo; the main checkout is never touched."
+        },
+        "path": {
+          "type": "string",
+          "description": "Prefix-match the worktree's checkout path (more brittle than repo)."
+        },
+        "defaultLayout": {
+          "type": "string",
+          "description": "Layout id applied to matching new worktrees."
+        }
+      }
+    }
+  }
+}
