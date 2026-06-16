@@ -234,6 +234,10 @@ panes — the plugin doesn't manage their lifecycle afterwards.
 - Pure ESM, no runtime dependencies (includes a small YAML-subset parser), so it
   works immediately under `herdr plugin link` with no build step.
 
+## Credits
+
+The declarative layout config is inspired by [workmux](https://github.com/raine/workmux).
+
 ## License
 
 [MIT](./LICENSE) © Raza Jamil
