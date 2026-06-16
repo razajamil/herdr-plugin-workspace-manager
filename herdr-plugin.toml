@@ -1,0 +1,47 @@
+id = "herdr-plugin-workspace-manager"
+name = "Workspace Manager"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Declarative tab/pane layouts with per-workspace defaults applied automatically when a worktree is created."
+platforms = ["linux", "macos"]
+
+# Fires for every new worktree. The handler matches the new worktree's checkout
+# path against the configured workspaces and, if a default layout is set, applies
+# it (creates the tabs/panes and runs their commands).
+[[events]]
+on = "worktree.created"
+command = ["node", "bin/event.mjs"]
+
+# The herdr UI "new worktree" command creates the worktree in-app and emits
+# NEITHER worktree.created nor workspace.created to plugins — the only event it
+# dispatches is workspace.focused (it focuses the new worktree on creation). So
+# we also listen for workspace.created (CLI path) and workspace.focused (UI
+# path). The hook dedupes, so the extra events are harmless.
+[[events]]
+on = "workspace.created"
+command = ["node", "bin/event.mjs"]
+
+[[events]]
+on = "workspace.focused"
+command = ["node", "bin/event.mjs"]
+
+# Manually apply a layout to the current (or a target) workspace. With no
+# argument it applies the workspace's default layout; pass a layout id to force
+# a specific one. Also used by the integration test as a controllable hook.
+[[actions]]
+id = "apply"
+title = "Apply workspace layout"
+contexts = ["workspace"]
+command = ["node", "bin/apply.mjs"]
+
+# Parse + validate the config file and print the resolved layouts/workspaces.
+[[actions]]
+id = "validate"
+title = "Validate workspace config"
+command = ["node", "bin/validate.mjs"]
+
+[[keys.command]]
+key = "prefix+shift+l"
+type = "plugin_action"
+command = "herdr-plugin-workspace-manager.apply"
+description = "apply workspace layout"

@@ -1,0 +1,77 @@
+# herdr-plugin-workspace-manager
+#
+# Copy this file to the plugin's config directory:
+#   herdr plugin config-dir herdr-plugin-workspace-manager
+# (typically ~/.config/herdr/plugins/config/herdr-plugin-workspace-manager/config.yml)
+#
+# A fallback path is also accepted:
+#   ~/.herdr/plugins/herdr-plugin-workspace-manager/config.yml
+
+# ---------------------------------------------------------------------------
+# layouts: named tab/pane templates.
+#
+# The plugin walks each layout depth-first, exactly as if you spawned the
+# tabs/panes by hand:
+#   - The FIRST tab reuses the worktree's existing tab + root pane.
+#   - Each later tab is created with `herdr tab create`.
+#   - The FIRST pane of a tab is that tab's root pane; each later pane splits
+#     from the previous pane in the same tab.
+#
+# pane.split direction:
+#   vertical   -> panes side by side      (herdr --direction right)  [default]
+#   horizontal -> panes stacked top/bottom (herdr --direction down)
+#   right / down are also accepted literally.
+#
+# setup (optional, per layout):
+#   Runs ONE command on the single pane marked `setup: true`.
+#   If `blocking: true`, no further tabs/panes are spawned until the setup
+#   command finishes (detected via a sentinel + `herdr wait output`).
+#   After setup finishes, that pane still runs its own `command` if it has one.
+#   At most ONE pane per layout may set `setup: true`.
+# ---------------------------------------------------------------------------
+layouts:
+  - id: reckon-frontend
+    setup:
+      command: mise run setup
+      blocking: true
+    tabs:
+      - title: main
+        panes:
+          - title: agent
+            command: opencode
+            setup: true
+          - title: editor
+            command: nvim
+            split: vertical
+      - title: dev-server
+        panes:
+          - title: server
+          - title: review
+            split: horizontal
+      - title: review
+        panes:
+          - title: agent
+            command: opencode
+          - title: editor
+            command: nvim
+            split: vertical
+
+# ---------------------------------------------------------------------------
+# workspaces: map a repo (or a worktree directory) to a default layout.
+#
+# When a new *linked worktree* is created, its repo is matched against these
+# entries and the `defaultLayout` is applied. Each entry needs `repo` and/or
+# `path`:
+#
+#   repo: the repo's main checkout path (its `repo_root`) — RECOMMENDED. Stable
+#         regardless of where herdr stores worktrees. A bare repo name (e.g.
+#         `reckon-frontend`) also matches. `~` is expanded. The repo's own main
+#         checkout is never touched — only linked worktrees of it.
+#   path: prefix-match the worktree's checkout path (the older, more brittle
+#         style — herdr's worktrees dir is configurable).
+#
+# A `repo` match wins over a `path` match if both are present.
+# ---------------------------------------------------------------------------
+workspaces:
+  - repo: ~/dev/reckon-frontend
+    defaultLayout: reckon-frontend

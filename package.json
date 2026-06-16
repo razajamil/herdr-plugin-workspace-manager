@@ -1,0 +1,16 @@
+{
+  "name": "herdr-plugin-workspace-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Declarative herdr tab/pane layouts with per-workspace defaults applied on worktree creation.",
+  "scripts": {
+    "validate": "node bin/validate.mjs",
+    "test": "node --test test/yaml.test.mjs test/plan.test.mjs test/config.test.mjs test/apply-core.test.mjs test/integration.test.mjs",
+    "test:unit": "node --test test/yaml.test.mjs test/plan.test.mjs test/config.test.mjs test/apply-core.test.mjs",
+    "test:integration": "node --test test/integration.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
