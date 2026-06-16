@@ -13,7 +13,7 @@ import {
 
 const SAMPLE = [
   "layouts:",
-  "  - id: reckon-frontend",
+  "  - id: web-app",
   "    setup:",
   "      command: mise run setup",
   "      blocking: true",
@@ -32,13 +32,13 @@ const SAMPLE = [
   "          - title: review",
   "            split: horizontal",
   "workspaces:",
-  "  - path: ~/.herdr/worktrees/reckon-frontend",
-  "    defaultLayout: reckon-frontend",
+  "  - path: ~/.herdr/worktrees/web-app",
+  "    defaultLayout: web-app",
 ].join("\n");
 
 test("normalizes the sample config and maps split aliases", () => {
   const config = validateConfig(parseYaml(SAMPLE));
-  const layout = findLayout(config, "reckon-frontend");
+  const layout = findLayout(config, "web-app");
   assert.ok(layout);
   assert.deepEqual(layout.setup, { command: "mise run setup", blocking: true });
   // vertical -> right, horizontal -> down
@@ -144,10 +144,10 @@ test("expandHome expands ~", () => {
 
 test("matchWorkspaceLayout matches paths under the workspace root", () => {
   const config = validateConfig(parseYaml(SAMPLE));
-  const root = path.join(homedir(), ".herdr/worktrees/reckon-frontend");
+  const root = path.join(homedir(), ".herdr/worktrees/web-app");
   const match = matchWorkspaceLayout(config, path.join(root, "my-branch"));
   assert.ok(match);
-  assert.equal(match.layout.id, "reckon-frontend");
+  assert.equal(match.layout.id, "web-app");
   // exact path also matches
   assert.ok(matchWorkspaceLayout(config, root));
   // unrelated path does not
@@ -189,16 +189,16 @@ const REPO_CFG = [
   "        panes:",
   "          - title: a",
   "workspaces:",
-  "  - repo: ~/dev/reckon-frontend",
+  "  - repo: ~/dev/web-app",
   "    defaultLayout: rf",
 ].join("\n");
 
 test("matches a worktree by repo_root", () => {
   const cfg = validateConfig(parseYaml(REPO_CFG));
   const match = matchWorkspaceLayout(cfg, {
-    checkoutPath: path.join(homedir(), ".herdr/worktrees/reckon-frontend/some-branch"),
-    repoRoot: path.join(homedir(), "dev/reckon-frontend"),
-    repoName: "reckon-frontend",
+    checkoutPath: path.join(homedir(), ".herdr/worktrees/web-app/some-branch"),
+    repoRoot: path.join(homedir(), "dev/web-app"),
+    repoName: "web-app",
   });
   assert.ok(match);
   assert.equal(match.layout.id, "rf");
@@ -206,12 +206,12 @@ test("matches a worktree by repo_root", () => {
 
 test("matches a worktree by bare repo name", () => {
   const cfg = validateConfig(
-    parseYaml(REPO_CFG.replace("~/dev/reckon-frontend", "reckon-frontend")),
+    parseYaml(REPO_CFG.replace("~/dev/web-app", "web-app")),
   );
   const match = matchWorkspaceLayout(cfg, {
     checkoutPath: "/anywhere/else",
-    repoRoot: "/some/other/path/reckon-frontend",
-    repoName: "reckon-frontend",
+    repoRoot: "/some/other/path/web-app",
+    repoName: "web-app",
   });
   assert.equal(match.layout.id, "rf");
 });
@@ -242,17 +242,17 @@ test("repo match wins over a path match", () => {
         "        panes:",
         "          - title: a",
         "workspaces:",
-        "  - path: /wt/reckon-frontend",
+        "  - path: /wt/web-app",
         "    defaultLayout: bypath",
-        "  - repo: /dev/reckon-frontend",
+        "  - repo: /dev/web-app",
         "    defaultLayout: byrepo",
       ].join("\n"),
     ),
   );
   const match = matchWorkspaceLayout(cfg, {
-    checkoutPath: "/wt/reckon-frontend/branch",
-    repoRoot: "/dev/reckon-frontend",
-    repoName: "reckon-frontend",
+    checkoutPath: "/wt/web-app/branch",
+    repoRoot: "/dev/web-app",
+    repoName: "web-app",
   });
   assert.equal(match.layout.id, "byrepo");
 });

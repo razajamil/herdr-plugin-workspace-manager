@@ -88,7 +88,7 @@ test("parses the full example shape", () => {
   const doc = parseYaml(
     [
       "layouts:",
-      "  - id: reckon-frontend",
+      "  - id: web-app",
       "    setup:",
       "      command: mise run setup",
       "      blocking: true",
@@ -102,17 +102,17 @@ test("parses the full example shape", () => {
       "            command: nvim",
       "            split: vertical",
       "workspaces:",
-      "  - path: ~/.herdr/worktrees/reckon-frontend",
-      "    defaultLayout: reckon-frontend",
+      "  - path: ~/.herdr/worktrees/web-app",
+      "    defaultLayout: web-app",
     ].join("\n"),
   );
   assert.equal(doc.layouts.length, 1);
-  assert.equal(doc.layouts[0].id, "reckon-frontend");
+  assert.equal(doc.layouts[0].id, "web-app");
   assert.equal(doc.layouts[0].setup.blocking, true);
   assert.equal(doc.layouts[0].tabs[0].panes[0].setup, true);
   assert.equal(doc.layouts[0].tabs[0].panes[1].split, "vertical");
   assert.deepEqual(doc.workspaces, [
-    { path: "~/.herdr/worktrees/reckon-frontend", defaultLayout: "reckon-frontend" },
+    { path: "~/.herdr/worktrees/web-app", defaultLayout: "web-app" },
   ]);
 });
 

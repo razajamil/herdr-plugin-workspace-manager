@@ -18,60 +18,57 @@
 #     from the previous pane in the same tab.
 #
 # pane.split direction:
-#   vertical   -> panes side by side      (herdr --direction right)  [default]
-#   horizontal -> panes stacked top/bottom (herdr --direction down)
+#   vertical   -> panes side by side       (herdr --direction right)  [default]
+#   horizontal -> panes stacked top/bottom  (herdr --direction down)
 #   right / down are also accepted literally.
 #
 # setup (optional, per layout):
 #   Runs ONE command on the single pane marked `setup: true`.
 #   If `blocking: true`, no further tabs/panes are spawned until the setup
-#   command finishes (detected via a sentinel + `herdr wait output`).
-#   After setup finishes, that pane still runs its own `command` if it has one.
-#   At most ONE pane per layout may set `setup: true`.
+#   command finishes. After setup finishes, that pane still runs its own
+#   `command` if it has one. At most ONE pane per layout may set `setup: true`.
 # ---------------------------------------------------------------------------
 layouts:
-  - id: reckon-frontend
+  - id: web-app
     setup:
-      command: mise run setup
+      command: npm install
       blocking: true
     tabs:
-      - title: main
+      - title: code
         panes:
           - title: agent
-            command: opencode
+            command: claude
             setup: true
           - title: editor
             command: nvim
             split: vertical
-      - title: dev-server
+      - title: server
         panes:
-          - title: server
-          - title: review
+          - title: dev
+            command: npm run dev
+          - title: shell
             split: horizontal
-      - title: review
+      - title: git
         panes:
-          - title: agent
-            command: opencode
-          - title: editor
-            command: nvim
-            split: vertical
+          - title: lazygit
+            command: lazygit
 
 # ---------------------------------------------------------------------------
 # workspaces: map a repo (or a worktree directory) to a default layout.
 #
-# When a new *linked worktree* is created, its repo is matched against these
+# When a new linked worktree is created, its repo is matched against these
 # entries and the `defaultLayout` is applied. Each entry needs `repo` and/or
 # `path`:
 #
-#   repo: the repo's main checkout path (its `repo_root`) — RECOMMENDED. Stable
+#   repo: the repo's main checkout path (its repo_root) -- RECOMMENDED. Stable
 #         regardless of where herdr stores worktrees. A bare repo name (e.g.
-#         `reckon-frontend`) also matches. `~` is expanded. The repo's own main
-#         checkout is never touched — only linked worktrees of it.
-#   path: prefix-match the worktree's checkout path (the older, more brittle
-#         style — herdr's worktrees dir is configurable).
+#         `web-app`) also matches. `~` is expanded. The repo's own main checkout
+#         is never touched -- only linked worktrees of it.
+#   path: prefix-match the worktree's checkout path (more brittle -- herdr's
+#         worktrees dir is configurable).
 #
 # A `repo` match wins over a `path` match if both are present.
 # ---------------------------------------------------------------------------
 workspaces:
-  - repo: ~/dev/reckon-frontend
-    defaultLayout: reckon-frontend
+  - repo: ~/code/web-app
+    defaultLayout: web-app

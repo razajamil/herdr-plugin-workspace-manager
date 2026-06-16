@@ -6,7 +6,7 @@ import { buildPlan } from "../src/plan.mjs";
 
 const SAMPLE = [
   "layouts:",
-  "  - id: reckon-frontend",
+  "  - id: web-app",
   "    setup:",
   "      command: mise run setup",
   "      blocking: true",
@@ -35,12 +35,12 @@ const SAMPLE = [
 
 function plan(cwd = "/work") {
   const config = validateConfig(parseYaml(SAMPLE));
-  return buildPlan(findLayout(config, "reckon-frontend"), { cwd });
+  return buildPlan(findLayout(config, "web-app"), { cwd });
 }
 
 test("produces the exact depth-first step sequence", () => {
   const { layoutId, steps } = plan("/work");
-  assert.equal(layoutId, "reckon-frontend");
+  assert.equal(layoutId, "web-app");
   assert.deepEqual(steps, [
     // tab 0 "main" reuses the worktree's root tab + root pane
     { kind: "reuse-tab", tab: "t0", title: "main" },
