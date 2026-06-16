@@ -38,6 +38,7 @@ Create `config.yml` in the config directory above (a fallback path
 annotated template lives in [`config.example.yml`](./config.example.yml).
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json
 layouts:
   - id: web-app
     setup:
