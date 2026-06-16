@@ -49,6 +49,13 @@ layouts:
             command: npm run dev
           - title: shell
             split: horizontal
+      - title: review
+        panes:
+          - title: agent
+            command: opencode
+          - title: editor
+            command: nvim
+            split: vertical
       - title: git
         panes:
           - title: lazygit
