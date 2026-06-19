@@ -140,6 +140,68 @@ herdr plugin action invoke validate --plugin herdr-plugin-workspace-manager
 
 A keybinding (`prefix+shift+l` → apply) is declared in the manifest.
 
+### Removing worktrees whose remote branch is gone
+
+After a PR merges and its branch is deleted upstream, the local worktree lingers.
+The plugin can clean up the **current repo's** linked worktrees whose remote
+branch was deleted ("gone", in git's terms).
+
+The most convenient interface is the bundled CLI, **`herdr-workspace-manager`**
+(see [CLI](#cli) for putting it on your `PATH`). It prints straight to your
+terminal, lists the gone worktrees by workspace name, then asks for confirmation
+before removing them:
+
+```sh
+# List the gone worktrees, then prompt "Remove N worktree(s)? [y/N]":
+herdr-workspace-manager remove-gone
+
+# Just print the list; remove nothing, no prompt:
+herdr-workspace-manager remove-gone --dry-run
+
+# Skip the prompt (for scripts); add --force to also remove dirty worktrees:
+herdr-workspace-manager remove-gone --confirm --force
+```
+
+The preview is also exposed as a plugin **action** for the TUI action menu /
+keybindings. It runs headless (no prompt) and removes nothing — `action invoke`
+streams output to the plugin log rather than your terminal, so the CLI is the way
+to actually remove worktrees:
+
+```sh
+herdr plugin action invoke remove-gone --plugin herdr-plugin-workspace-manager  # preview only
+```
+
+A branch is only ever a candidate when it **had an upstream that was then
+deleted**. Worktrees on branches that never pushed/tracked a remote are left
+alone, as is the repo's main checkout. Removal additionally **skips** (and
+reports) the workspace you run it from and — unless `--force` — any worktree with
+uncommitted changes, so nothing in-progress is destroyed silently. A clean
+worktree's committed history survives removal (it stays in the repo's object
+store/reflog). A `git fetch --prune` runs first so deleted branches are detected
+accurately; pass `--no-fetch` (or set `HERDR_WSM_NO_FETCH=1`) to use cached refs.
+
+## CLI
+
+`herdr-workspace-manager` is an executable shipped in [`bin/`](./bin). It isn't
+automatically on your `PATH`; symlink it into a directory that is (the same place
+`herdr` lives works well). Developing from a clone:
+
+```sh
+ln -sf "$PWD/bin/herdr-workspace-manager.mjs" ~/.local/bin/herdr-workspace-manager
+```
+
+For an installed plugin, resolve its root from `herdr plugin list` first:
+
+```sh
+root=$(herdr plugin list --plugin herdr-plugin-workspace-manager --json \
+  | node -e 'process.stdin.on("data",d=>console.log(JSON.parse(d).result.plugins[0].plugin_root))')
+ln -sf "$root/bin/herdr-workspace-manager.mjs" ~/.local/bin/herdr-workspace-manager
+```
+
+Run `herdr-workspace-manager --help` for the full command list. It resolves the
+target repo from the current pane's workspace; pass `--workspace <id>` to target
+another.
+
 ## Tuning (env vars)
 
 | Var | Default | Purpose |
@@ -147,6 +209,7 @@ A keybinding (`prefix+shift+l` → apply) is declared in the manifest.
 | `HERDR_WSM_CONFIG` | — | Absolute path to a config file (overrides the default lookup). |
 | `HERDR_WSM_PANE_READY_MS` | `700` | Delay before sending the first command to a freshly spawned pane (its shell needs a moment, or early keystrokes are dropped). |
 | `HERDR_WSM_SETUP_TIMEOUT_MS` | `600000` | Max wait for a blocking setup command to finish. |
+| `HERDR_WSM_NO_FETCH` | — | If set, `remove-gone` skips the `git fetch --prune` and uses cached remote-tracking refs. |
 
 ## Trust & security
 

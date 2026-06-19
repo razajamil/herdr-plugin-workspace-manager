@@ -40,6 +40,18 @@ id = "validate"
 title = "Validate workspace config"
 command = ["node", "bin/validate.mjs"]
 
+# Preview the current repo's linked worktrees whose remote branch was deleted
+# ("gone"). Removes nothing — worktrees that never pushed/tracked a remote are
+# never listed. Run from any workspace of the repo you want to clean up. To
+# actually remove them, use the CLI: `herdr-workspace-manager remove-gone`
+# (it prompts; pass --confirm to skip the prompt). The action stays preview-only
+# because plugin actions run headless and can't ask for confirmation.
+[[actions]]
+id = "remove-gone"
+title = "Remove gone worktrees (preview)"
+contexts = ["workspace"]
+command = ["node", "bin/remove-gone.mjs"]
+
 [[keys.command]]
 key = "prefix+shift+l"
 type = "plugin_action"

@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- Clean up the current repo's linked worktrees whose remote branch was deleted
+  ("gone"). Preview lists candidates by workspace name; applying removes them,
+  skipping the invoking workspace and (unless forced) any worktree with
+  uncommitted changes. Branches that never pushed/tracked a remote and the
+  repo's main checkout are never touched. A `git fetch --prune` runs first
+  (skip with `--no-fetch` / `HERDR_WSM_NO_FETCH`).
+  - New `herdr-workspace-manager` CLI (in `bin/`): `remove-gone` lists the gone
+    worktrees and prompts `[y/N]` before removing. Flags: `--dry-run` (list
+    only, no prompt), `--confirm` (remove without prompting), `--force` (also
+    remove dirty), `--no-fetch`, `--workspace ID`. Prints to your terminal.
+  - Preview also exposed as the `remove-gone` plugin action for the TUI
+    (headless, no prompt, removes nothing).
+
 ## [0.1.0] - 2026-06-16
 
 Initial release.

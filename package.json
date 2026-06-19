@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "description": "Declarative herdr tab/pane layouts with per-workspace defaults applied on worktree creation.",
+  "bin": {
+    "herdr-workspace-manager": "bin/herdr-workspace-manager.mjs"
+  },
   "scripts": {
     "validate": "node bin/validate.mjs",
-    "test": "node --test test/yaml.test.mjs test/plan.test.mjs test/config.test.mjs test/apply-core.test.mjs test/integration.test.mjs",
-    "test:unit": "node --test test/yaml.test.mjs test/plan.test.mjs test/config.test.mjs test/apply-core.test.mjs",
+    "test": "node --test test/yaml.test.mjs test/plan.test.mjs test/config.test.mjs test/apply-core.test.mjs test/remove-gone.test.mjs test/integration.test.mjs",
+    "test:unit": "node --test test/yaml.test.mjs test/plan.test.mjs test/config.test.mjs test/apply-core.test.mjs test/remove-gone.test.mjs",
     "test:integration": "node --test test/integration.test.mjs"
   },
   "engines": {
