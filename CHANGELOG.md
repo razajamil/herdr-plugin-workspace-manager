@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.2.0] - 2026-06-19
 
 - Clean up the current repo's linked worktrees whose remote branch was deleted
   ("gone"). Preview lists candidates by workspace name; applying removes them,
