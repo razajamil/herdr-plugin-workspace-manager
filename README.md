@@ -9,6 +9,13 @@ No more rebuilding your working view by hand each time.
 It can also run a one-off **setup command** (e.g. `npm install`) in a chosen
 pane before the rest of the layout spawns.
 
+## Demo
+
+https://github.com/user-attachments/assets/2b222886-b256-4187-a8ae-1a560dd08eef
+
+A new worktree opens straight into its declarative layout — the `agent` / `review` /
+`git` / `dev-server` tabs, each with its editor and terminal panes already running.
+
 ## Install
 
 Requires **herdr ≥ 0.7.0** and **Node ≥ 18** on your `PATH` (used to run the
