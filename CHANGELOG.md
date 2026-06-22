@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.2.1] - 2026-06-22
 
 - Re-apply a workspace's layout when its worktree is removed and then recreated
   at the same path. The per-worktree "applied" claim is now validated against
