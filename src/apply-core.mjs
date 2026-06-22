@@ -1,7 +1,15 @@
 // Shared logic for the event hook and the manual `apply` action: figure out
 // which workspace/tab/pane to build into, then build + run the plan.
 
-import { mkdirSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  existsSync,
+  rmSync,
+  statSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -99,23 +107,105 @@ function stateDir(env) {
   return env.HERDR_PLUGIN_STATE_DIR || path.join(tmpdir(), "herdr-wsc-state");
 }
 
+function appliedDir(env) {
+  return path.join(stateDir(env), "applied");
+}
+
 function claimPath(env, checkoutPath) {
   const key = createHash("sha1").update(path.resolve(checkoutPath)).digest("hex");
-  return path.join(stateDir(env), "applied", key);
+  return path.join(appliedDir(env), key);
+}
+
+function claimMetaPath(dir) {
+  return path.join(dir, "meta.json");
+}
+
+// The worktree's filesystem identity. A delete+recreate at the same path gets a
+// new inode (a brand-new directory) and, on filesystems that record it, a new
+// birth time -- either of which marks the claim from the previous worktree as
+// stale. Returns nulls if the path can't be stat'd (e.g. already gone), in
+// which case callers treat the identity as unknowable.
+function worktreeIdentity(checkoutPath) {
+  try {
+    const st = statSync(checkoutPath);
+    return {
+      ino: String(st.ino),
+      birthtimeMs: Number.isFinite(st.birthtimeMs) && st.birthtimeMs > 0
+        ? Math.floor(st.birthtimeMs)
+        : null,
+    };
+  } catch {
+    return { ino: null, birthtimeMs: null };
+  }
+}
+
+function readClaimMeta(dir) {
+  try {
+    return JSON.parse(readFileSync(claimMetaPath(dir), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeClaimMeta(dir, checkoutPath) {
+  try {
+    writeFileSync(
+      claimMetaPath(dir),
+      JSON.stringify({ path: path.resolve(checkoutPath), ...worktreeIdentity(checkoutPath) }),
+    );
+  } catch {
+    /* best effort -- a missing record just falls back to the mtime heuristic */
+  }
+}
+
+// Is an existing claim stale -- i.e. left over from a *previous* worktree that
+// lived at this same path and has since been removed and recreated? A worktree
+// can be removed by this plugin, another plugin, or the user directly, and none
+// of those reliably emit an event, so we decide from filesystem ground truth at
+// claim time rather than trying to catch the removal.
+function isStaleClaim(dir, checkoutPath) {
+  const cur = worktreeIdentity(checkoutPath);
+  if (cur.ino == null && cur.birthtimeMs == null) return false; // identity unknowable
+  const meta = readClaimMeta(dir);
+  // A different inode means the directory was recreated.
+  if (meta?.ino != null && cur.ino != null && meta.ino !== cur.ino) return true;
+  // The current worktree was born after the claim was established -> it's a
+  // newer instance at the same path. Use the recorded birth time, or for legacy
+  // claims (no record) fall back to the claim directory's own mtime.
+  let claimAt = meta?.birthtimeMs ?? null;
+  if (claimAt == null) {
+    try {
+      claimAt = statSync(dir).mtimeMs;
+    } catch {
+      claimAt = null;
+    }
+  }
+  if (claimAt != null && cur.birthtimeMs != null && cur.birthtimeMs > claimAt) return true;
+  return false;
 }
 
 // Atomically claim a worktree for application. Returns true if we won the claim
-// (first to see it), false if it was already claimed. mkdir is atomic across
-// processes, so concurrent worktree.created/workspace.created hooks can't both
-// win. The claim persists, so restored worktrees are skipped after a restart.
+// (first to see it), false if a valid claim already exists. mkdir is atomic
+// across processes, so concurrent worktree.created/workspace.created hooks can't
+// both win. The claim persists across restarts so *restored* worktrees are
+// skipped -- but a stale claim left by a removed-and-recreated worktree at the
+// same path is detected and reset, so the layout is re-applied on recreate.
 export function claimApply(env, checkoutPath) {
-  mkdirSync(path.join(stateDir(env), "applied"), { recursive: true });
+  const dir = claimPath(env, checkoutPath);
+  mkdirSync(appliedDir(env), { recursive: true });
   try {
-    mkdirSync(claimPath(env, checkoutPath)); // non-recursive -> EEXIST if taken
+    mkdirSync(dir); // non-recursive -> EEXIST if taken
+    writeClaimMeta(dir, checkoutPath);
     return true;
   } catch (err) {
-    if (err.code === "EEXIST") return false;
-    throw err;
+    if (err.code !== "EEXIST") throw err;
+    if (isStaleClaim(dir, checkoutPath)) {
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir);
+      writeClaimMeta(dir, checkoutPath);
+      return true;
+    }
+    return false;
   }
 }
 
@@ -125,6 +215,32 @@ export function releaseApply(env, checkoutPath) {
 
 export function alreadyApplied(env, checkoutPath) {
   return existsSync(claimPath(env, checkoutPath));
+}
+
+// Opportunistic GC: drop claims whose worktree no longer exists on disk, so the
+// `applied/` directory doesn't grow without bound and a future worktree at a
+// reclaimed path starts clean. Pure filesystem, no herdr query -- cheap enough
+// to run on each (non-hot-path) hook invocation. Legacy claims with no record
+// can't be mapped back to a path, so they're left for isStaleClaim to handle on
+// recreate. Returns the number of claims reaped.
+export function reapOrphanClaims(env) {
+  let entries;
+  try {
+    entries = readdirSync(appliedDir(env));
+  } catch {
+    return 0; // nothing claimed yet
+  }
+  let reaped = 0;
+  for (const name of entries) {
+    const claim = path.join(appliedDir(env), name);
+    const meta = readClaimMeta(claim);
+    if (!meta?.path) continue; // legacy or in-progress claim -- leave it
+    if (!existsSync(meta.path)) {
+      rmSync(claim, { recursive: true, force: true });
+      reaped += 1;
+    }
+  }
+  return reaped;
 }
 
 // A brand-new worktree workspace has exactly one tab and one pane. Anything

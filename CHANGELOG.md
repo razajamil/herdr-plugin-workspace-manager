@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- Re-apply a workspace's layout when its worktree is removed and then recreated
+  at the same path. The per-worktree "applied" claim is now validated against
+  the live directory's identity (inode + birth time), so a stale claim left by a
+  previous worktree — removed by this plugin, another plugin, or you directly —
+  no longer suppresses the layout on the new worktree. Restored worktrees are
+  still skipped (no clobber), and claims for worktrees that no longer exist are
+  reaped opportunistically so the state directory doesn't grow without bound.
+
 ## [0.2.0] - 2026-06-19
 
 - Clean up the current repo's linked worktrees whose remote branch was deleted

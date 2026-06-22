@@ -22,6 +22,7 @@ import {
   applyLayout,
   claimApply,
   releaseApply,
+  reapOrphanClaims,
   isDecided,
   markDecided,
 } from "../src/apply-core.mjs";
@@ -40,6 +41,11 @@ async function main() {
   // Fast path: workspace.focused fires constantly; once a workspace has been
   // handled, skip without querying anything.
   if (isFocus && isDecided(env, p.workspaceId)) return;
+
+  // Past the hot repeat-focus path: opportunistically drop claims for worktrees
+  // that have since been removed (by us, another plugin, or the user directly),
+  // so a worktree recreated at a reclaimed path isn't wrongly skipped.
+  reapOrphanClaims(env);
 
   const done = (msg) => {
     if (msg) log(msg);
