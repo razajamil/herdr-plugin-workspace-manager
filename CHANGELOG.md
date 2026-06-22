@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.2.2] - 2026-06-23
 
 - Add an [`install.sh`](./install.sh) helper that puts the
   `herdr-workspace-manager` CLI on your `PATH` in one command — it resolves the
