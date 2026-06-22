@@ -1,13 +1,19 @@
 # herdr-plugin-workspace-manager
 
-A [herdr](https://herdr.dev) plugin for **declarative tab/pane layouts** with
-**per-workspace defaults**. Define a layout once, point a repo at it, and every
-new worktree you create — from the CLI *or* the herdr TUI — is automatically
-arranged into that layout: tabs, panes, splits, and per-pane startup commands.
-No more rebuilding your working view by hand each time.
+A [herdr](https://herdr.dev) plugin that arranges every new worktree into a
+declarative layout — and cleans up the ones you're done with.
 
-It can also run a one-off **setup command** (e.g. `npm install`) in a chosen
-pane before the rest of the layout spawns.
+- **Declarative tab/pane layouts.** Define tabs, panes, splits, and per-pane
+  startup commands once in YAML.
+- **Applied automatically, per repo.** Point a repo at a layout and every new
+  worktree — created from the CLI *or* the herdr TUI — opens straight into it,
+  fully arranged. No rebuilding your working view by hand each time.
+- **One-off setup command.** Run e.g. `npm install` in a chosen pane before the
+  rest of the layout spawns — optionally blocking until it finishes.
+- **Clean up merged worktrees in one command.** `herdr-workspace-manager
+  remove-gone` removes the current repo's linked worktrees whose upstream branch
+  is gone (e.g. after a PR merged and its branch was deleted), leaving the main
+  checkout and anything dirty or in-progress untouched.
 
 ## Demo
 
@@ -16,7 +22,7 @@ https://github.com/user-attachments/assets/2b222886-b256-4187-a8ae-1a560dd08eef
 A new worktree opens straight into its declarative layout — the `agent` / `review` /
 `git` / `dev-server` tabs, each with its editor and terminal panes already running.
 
-## Install
+## Quick start
 
 Requires **herdr ≥ 0.7.0** and **Node ≥ 18** on your `PATH` (used to run the
 hook). No other dependencies and no build step.
@@ -38,7 +44,27 @@ Developing locally? `git clone` the repo and `herdr plugin link ./herdr-plugin-w
 for live edits (`link` skips any build step). Pin a release with `--ref`, or use
 `--yes` for a non-interactive install.
 
-## Configuration
+### Optional: the `remove-gone` CLI
+
+`herdr-workspace-manager` is a CLI bundled with the plugin, needed only to
+[remove merged worktrees](#removing-worktrees-whose-remote-branch-is-gone) —
+layouts work without it. Installing the plugin doesn't put it on your `PATH`, so
+run the bundled [`install.sh`](./install.sh), which symlinks it into `~/.local/bin`:
+
+```sh
+# From a clone of this repo:
+./install.sh
+
+# Or, if you installed the plugin and have no clone, fetch and run it:
+curl -fsSL https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/install.sh | sh
+```
+
+Link it elsewhere by passing a directory (`./install.sh ~/bin`); the installer
+works whether the plugin is installed or linked, and warns if the target isn't on
+your `PATH`. Then run `herdr-workspace-manager --help`; pass `--workspace <id>` to
+target a repo other than the current pane's.
+
+## Configure a layout
 
 Create `config.yml` in the config directory above (a fallback path
 `~/.herdr/plugins/herdr-plugin-workspace-manager/config.yml` also works). A fully
@@ -116,26 +142,7 @@ command runs there first; with `blocking: true` the hook waits for it to finish
 before building anything else. After setup, that pane still runs its own
 `command`. Put the setup pane first so nothing spawns ahead of it.
 
-### Editor autocomplete
-
-The repo ships a JSON Schema ([`schema.json`](./schema.json)). Editors backed by
-the YAML Language Server — VS Code (Red Hat YAML extension), Neovim (`yamlls`),
-Helix, etc. — give you completion, hover docs, and validation when the file
-starts with this modeline (the bundled `config.example.yml` already includes it):
-
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json
-```
-
-Or map it without editing the file, e.g. in VS Code `settings.json`:
-
-```json
-"yaml.schemas": {
-  "https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json": "**/herdr-plugin-workspace-manager/config.yml"
-}
-```
-
-## Actions
+### Apply and validate
 
 ```sh
 # Apply a layout to the current workspace (or pass a layout id):
@@ -154,9 +161,9 @@ The plugin can clean up the **current repo's** linked worktrees whose remote
 branch was deleted ("gone", in git's terms).
 
 The most convenient interface is the bundled CLI, **`herdr-workspace-manager`**
-(see [CLI](#cli) for putting it on your `PATH`). It prints straight to your
-terminal, lists the gone worktrees by workspace name, then asks for confirmation
-before removing them:
+(see [Quick start](#optional-the-remove-gone-cli) for putting it on your `PATH`).
+It prints straight to your terminal, lists the gone worktrees by workspace name,
+then asks for confirmation before removing them:
 
 ```sh
 # List the gone worktrees, then prompt "Remove N worktree(s)? [y/N]":
@@ -187,27 +194,24 @@ worktree's committed history survives removal (it stays in the repo's object
 store/reflog). A `git fetch --prune` runs first so deleted branches are detected
 accurately; pass `--no-fetch` (or set `HERDR_WSM_NO_FETCH=1`) to use cached refs.
 
-## CLI
+### Editor autocomplete
 
-`herdr-workspace-manager` is an executable shipped in [`bin/`](./bin). It isn't
-automatically on your `PATH`; symlink it into a directory that is (the same place
-`herdr` lives works well). Developing from a clone:
+The repo ships a JSON Schema ([`schema.json`](./schema.json)). Editors backed by
+the YAML Language Server — VS Code (Red Hat YAML extension), Neovim (`yamlls`),
+Helix, etc. — give you completion, hover docs, and validation when the file
+starts with this modeline (the bundled `config.example.yml` already includes it):
 
-```sh
-ln -sf "$PWD/bin/herdr-workspace-manager.mjs" ~/.local/bin/herdr-workspace-manager
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json
 ```
 
-For an installed plugin, resolve its root from `herdr plugin list` first:
+Or map it without editing the file, e.g. in VS Code `settings.json`:
 
-```sh
-root=$(herdr plugin list --plugin herdr-plugin-workspace-manager --json \
-  | node -e 'process.stdin.on("data",d=>console.log(JSON.parse(d).result.plugins[0].plugin_root))')
-ln -sf "$root/bin/herdr-workspace-manager.mjs" ~/.local/bin/herdr-workspace-manager
+```json
+"yaml.schemas": {
+  "https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json": "**/herdr-plugin-workspace-manager/config.yml"
+}
 ```
-
-Run `herdr-workspace-manager --help` for the full command list. It resolves the
-target repo from the current pane's workspace; pass `--workspace <id>` to target
-another.
 
 ## Tuning (env vars)
 
@@ -238,14 +242,6 @@ creates a throwaway git repo + a real linked worktree, drives the real
 `workspace.focused` hook, and asserts the tab/pane structure, that each pane
 command actually ran (via marker files), blocking-setup ordering, and
 idempotency — then cleans everything up.
-
-## Contributing / publishing
-
-This repo is a self-contained herdr plugin (a `herdr-plugin.toml` manifest plus
-ESM scripts). To list it in the herdr marketplace, the GitHub repo carries the
-`herdr-plugin` topic; anyone can then `herdr plugin install <owner>/<repo>`. Unit
-tests run in CI (`.github/workflows/ci.yml`); the integration test needs a local
-herdr server and is run manually.
 
 ## How it works
 
@@ -307,6 +303,14 @@ panes — the plugin doesn't manage their lifecycle afterwards.
 ## Credits
 
 The declarative layout config is inspired by [workmux](https://github.com/raine/workmux).
+
+## Contributing / publishing
+
+This repo is a self-contained herdr plugin (a `herdr-plugin.toml` manifest plus
+ESM scripts). To list it in the herdr marketplace, the GitHub repo carries the
+`herdr-plugin` topic; anyone can then `herdr plugin install <owner>/<repo>`. Unit
+tests run in CI (`.github/workflows/ci.yml`); the integration test needs a local
+herdr server and is run manually.
 
 ## License
 

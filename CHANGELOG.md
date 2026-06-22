@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- Add an [`install.sh`](./install.sh) helper that puts the
+  `herdr-workspace-manager` CLI on your `PATH` in one command — it resolves the
+  plugin location via herdr, so it works whether the plugin is installed or
+  linked.
+- Reorganize the README: a feature-list intro, a "Quick start" section, and a
+  single "Configure a layout" section covering layouts, `apply`/`validate`, and
+  worktree cleanup.
+
 ## [0.2.1] - 2026-06-22
 
 - Re-apply a workspace's layout when its worktree is removed and then recreated
