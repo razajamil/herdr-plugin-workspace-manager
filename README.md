@@ -17,7 +17,7 @@ declarative layout — and cleans up the ones you're done with.
 
 ## Demo
 
-https://github.com/user-attachments/assets/2b222886-b256-4187-a8ae-1a560dd08eef
+![A new worktree opening into its declarative tab/pane layout (2× speed)](docs/demo.gif)
 
 A new worktree opens straight into its declarative layout — the `agent` / `review` /
 `git` / `dev-server` tabs, each with its editor and terminal panes already running.
