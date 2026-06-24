@@ -104,13 +104,42 @@ layouts:
           - title: lazygit
             command: lazygit
 
+  # Trimmed variants selected by branch below.
+  - id: web-app-hotfix           # quick bug-fix branches: just agent + editor
+    tabs:
+      - title: code
+        panes:
+          - title: agent
+            command: claude
+          - title: editor
+            command: nvim
+            split: vertical
+  - id: web-app-docs             # docs / research branches: editor + shell
+    tabs:
+      - title: docs
+        panes:
+          - title: editor
+            command: nvim
+          - title: shell
+            split: vertical
+
 workspaces:
-  - repo: ~/code/web-app       # any linked worktree of this repo gets the layout
-    defaultLayout: web-app
+  - repo: ~/code/web-app          # any linked worktree of this repo gets a layout
+    defaultLayout: web-app        # used when no layoutMatching rule matches the branch
+    layoutMatching:               # optional: pick the layout from the worktree's branch
+      - title: Hotfix branches    # first matching rule wins — ordering is yours
+        worktreePattern: fix/rwr-*  # glob over the whole branch: * = any chars, ? = one
+        layout: web-app-hotfix
+      - title: Docs / research
+        worktreePattern: docs/*
+        layout: web-app-docs
 ```
 
 Now create a worktree for `~/code/web-app` (via the TUI or `herdr worktree create`)
 and it opens with the `code` / `server` / `git` tabs already laid out and running.
+A worktree on a `fix/rwr-*` branch instead opens the trimmed `web-app-hotfix`
+layout, and a `docs/*` branch opens `web-app-docs` — see **Per-branch layouts**
+below.
 
 ### Schema
 
@@ -127,10 +156,24 @@ and it opens with the `code` / `server` / `git` tabs already laid out and runnin
 | `panes[].ratio` | pane | Optional split ratio `(0, 1)`. |
 | `workspaces[].repo` | workspace | **Recommended.** Repo root (`~` expanded) or bare repo name. Matches any *linked worktree* of that repo; the main checkout is never touched. |
 | `workspaces[].path` | workspace | Alternative: prefix-match the worktree's checkout path. |
-| `workspaces[].defaultLayout` | workspace | Layout id applied to matching new worktrees. |
+| `workspaces[].defaultLayout` | workspace | Layout id applied to a matching new worktree when no `layoutMatching` rule matches its branch. |
+| `workspaces[].layoutMatching[]` | workspace | Optional ordered rules that pick a layout by the new worktree's **branch** name. First match wins. |
+| `…layoutMatching[].worktreePattern` | rule | Glob matched against the whole branch name (`*` = any chars, `?` = one). e.g. `fix/rwr-*`. |
+| `…layoutMatching[].layout` | rule | Layout id applied when this pattern matches. |
+| `…layoutMatching[].title` | rule | Optional label (documentation only). |
 
 Each `workspaces[]` entry needs `repo` and/or `path`; a `repo` match wins over a
 `path` match.
+
+**Per-branch layouts.** Within a matched workspace, `layoutMatching` (shown in
+the example above) chooses a layout from the new worktree's **branch** name.
+Rules are tried in the order you write them and the first whose `worktreePattern`
+matches wins; if none match (or the worktree has no branch, e.g. a detached HEAD)
+the `defaultLayout` applies. With neither a matching rule nor a `defaultLayout`,
+nothing is applied — exactly as today. `worktreePattern` is a glob over the
+entire branch name: `*` matches any run of characters (including `/`) and `?`
+matches a single one, so `fix/rwr-*` matches `fix/rwr-142-login` but not
+`hotfix/rwr-1`.
 
 **Split direction.** herdr splits are `right` or `down`. This plugin maps
 `vertical → right` (side by side) and `horizontal → down` (stacked); `right`/`down`
@@ -260,12 +303,14 @@ So the hook listens for `worktree.created`, `workspace.created`, **and**
 2. **Queries** that workspace for its worktree facts (the `workspace.focused`
    payload carries only an id).
 3. Skips unless it's a **linked worktree** (never the repo's main checkout).
-4. Matches against `workspaces[]` by **repo** (`repo_root`/`repo_name`) or path.
+4. Matches against `workspaces[]` by **repo** (`repo_root`/`repo_name`) or path,
+   then picks the layout: the first `layoutMatching` rule whose glob matches the
+   worktree's **branch**, else the workspace's `defaultLayout`.
 5. Only builds into a **fresh** (1-tab/1-pane) workspace.
 6. **Dedupes** with an atomic claim (the events can fire together; also skips
    restored worktrees after a restart) — applied exactly once per worktree.
-7. Walks the matched `defaultLayout` **depth-first**, driving the herdr CLI to
-   build it — exactly as if you'd done it by hand.
+7. Walks the chosen layout **depth-first**, driving the herdr CLI to build it —
+   exactly as if you'd done it by hand.
 
 > **Note on `workspace.focused`.** It fires on every workspace switch, so the
 > hook runs a tiny check each time (a "decided" cache makes repeat focuses a

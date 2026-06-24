@@ -58,6 +58,21 @@ function asString(value, what) {
   return value;
 }
 
+// Compile a glob pattern (workspaces[].layoutMatching[].worktreePattern) into an
+// anchored RegExp matched against a worktree's branch name. Only `*` (any run of
+// characters, including "/") and `?` (a single character) are special; every
+// other character is matched literally. The match is full-string, so
+// `fix/rwr-*` matches `fix/rwr-123-foo` but not `hotfix/rwr-123-foo`.
+export function globToRegExp(glob) {
+  let body = "";
+  for (const ch of glob) {
+    if (ch === "*") body += ".*";
+    else if (ch === "?") body += ".";
+    else body += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${body}$`);
+}
+
 function normalizeSetup(raw, layoutId) {
   if (raw == null) return null;
   if (typeof raw !== "object" || Array.isArray(raw)) {
@@ -142,6 +157,22 @@ function normalizeLayout(raw, index) {
   return { id, setup, tabs };
 }
 
+function normalizeMatchRule(raw, wsIndex, i) {
+  if (typeof raw !== "object" || raw == null || Array.isArray(raw)) {
+    throw new ConfigError(`workspace ${wsIndex}: layoutMatching[${i}] must be a mapping`);
+  }
+  const title =
+    raw.title != null
+      ? asString(raw.title, `workspace ${wsIndex}: layoutMatching[${i}].title`)
+      : null;
+  const worktreePattern = asString(
+    raw.worktreePattern,
+    `workspace ${wsIndex}: layoutMatching[${i}].worktreePattern`,
+  );
+  const layout = asString(raw.layout, `workspace ${wsIndex}: layoutMatching[${i}].layout`);
+  return { title, worktreePattern, layout, regex: globToRegExp(worktreePattern) };
+}
+
 function normalizeWorkspace(raw, index) {
   if (typeof raw !== "object" || raw == null || Array.isArray(raw)) {
     throw new ConfigError(`workspace ${index} must be a mapping`);
@@ -157,7 +188,12 @@ function normalizeWorkspace(raw, index) {
     raw.defaultLayout != null
       ? asString(raw.defaultLayout, `workspace ${index}: defaultLayout`)
       : null;
-  return { repo, path: wsPath, defaultLayout };
+  const layoutMatchingRaw = raw.layoutMatching ?? [];
+  if (!Array.isArray(layoutMatchingRaw)) {
+    throw new ConfigError(`workspace ${index}: layoutMatching must be a list`);
+  }
+  const layoutMatching = layoutMatchingRaw.map((r, i) => normalizeMatchRule(r, index, i));
+  return { repo, path: wsPath, defaultLayout, layoutMatching };
 }
 
 export function validateConfig(raw) {
@@ -183,12 +219,20 @@ export function validateConfig(raw) {
   if (!Array.isArray(workspacesRaw)) throw new ConfigError("workspaces must be a list");
   const workspaces = workspacesRaw.map(normalizeWorkspace);
 
-  // Cross-check: every referenced defaultLayout must exist.
+  // Cross-check: every layout referenced by a workspace must exist.
   for (const ws of workspaces) {
+    const label = ws.repo ?? ws.path;
     if (ws.defaultLayout && !seen.has(ws.defaultLayout)) {
       throw new ConfigError(
-        `workspace "${ws.path}" references unknown layout "${ws.defaultLayout}"`,
+        `workspace "${label}" references unknown layout "${ws.defaultLayout}"`,
       );
+    }
+    for (const rule of ws.layoutMatching) {
+      if (!seen.has(rule.layout)) {
+        throw new ConfigError(
+          `workspace "${label}" layoutMatching references unknown layout "${rule.layout}"`,
+        );
+      }
     }
   }
 
@@ -239,22 +283,41 @@ function matchScore(ws, target) {
   return null;
 }
 
+// Which layout does a matched workspace apply to a worktree on `branch`?
+// layoutMatching rules are tried in the order the user wrote them; the first
+// whose glob matches the branch (and whose layout exists) wins. When no rule
+// matches — or there's no branch to match against (e.g. a detached HEAD) — the
+// workspace's defaultLayout is used. Returns the layout object, or null if the
+// workspace yields no applicable layout.
+function resolveLayoutFor(config, ws, branch) {
+  if (branch != null) {
+    for (const rule of ws.layoutMatching) {
+      if (rule.regex.test(branch)) {
+        const layout = findLayout(config, rule.layout);
+        if (layout) return layout;
+      }
+    }
+  }
+  if (ws.defaultLayout) return findLayout(config, ws.defaultLayout);
+  return null;
+}
+
 // Find the layout to apply for a freshly created worktree. `target` may be a
-// plain checkout-path string, or { checkoutPath, repoRoot, repoName }.
-// Returns { workspace, layout } for the most specific match, or null.
+// plain checkout-path string, or { checkoutPath, repoRoot, repoName, branch }.
+// The most specific workspace (by repo/path) that actually yields a layout
+// wins; within it, layoutMatching branch patterns are tried before
+// defaultLayout. Returns { workspace, layout }, or null.
 export function matchWorkspaceLayout(config, target) {
   const t = typeof target === "string" ? { checkoutPath: target } : target ?? {};
   let best = null;
   let bestScore = -1;
   for (const ws of config.workspaces) {
-    if (!ws.defaultLayout) continue;
     const score = matchScore(ws, t);
-    if (score != null && score > bestScore) {
-      const layout = findLayout(config, ws.defaultLayout);
-      if (layout) {
-        best = { workspace: ws, layout };
-        bestScore = score;
-      }
+    if (score == null || score <= bestScore) continue;
+    const layout = resolveLayoutFor(config, ws, t.branch ?? null);
+    if (layout) {
+      best = { workspace: ws, layout };
+      bestScore = score;
     }
   }
   return best;

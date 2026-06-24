@@ -78,6 +78,11 @@ test(
     const token = `TOK${Date.now().toString(36)}`;
     // Match by repo root; structure mirrors a real layout but with cheap marker
     // commands. setup sleeps 1s so the blocking-ordering check is observable.
+    //
+    // The `itest` layout is selected by a layoutMatching rule on the branch
+    // (`itest`), NOT by defaultLayout (a 1-tab decoy). This proves the hook
+    // resolves the worktree's branch live -- if it couldn't, it would fall back
+    // to the decoy and the tab/pane assertions below would fail.
     writeFileSync(
       configPath,
       `
@@ -102,9 +107,18 @@ layouts:
           - title: b1
             split: horizontal
             command: echo b1 > ${m("b1.cmd")}
+  - id: itest-decoy
+    tabs:
+      - title: decoy
+        panes:
+          - title: only
 workspaces:
   - repo: ${repo}
-    defaultLayout: itest
+    defaultLayout: itest-decoy
+    layoutMatching:
+      - title: branch match
+        worktreePattern: itest
+        layout: itest
 `,
     );
 
@@ -158,6 +172,8 @@ workspaces:
       const run = runEvent("workspace.focused");
       assert.equal(run.status, 0, `event hook failed:\n${run.stderr}`);
       const summary = JSON.parse(run.stdout.trim().split("\n").pop());
+      // The branch-matched layout won over the decoy defaultLayout -> the hook
+      // resolved the worktree's branch (`itest`) from the live server.
       assert.equal(summary.layoutId, "itest");
 
       // 3. Structure: two tabs (alpha, beta), 2 panes each.

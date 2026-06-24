@@ -8,6 +8,7 @@ import {
   matchWorkspaceLayout,
   findLayout,
   expandHome,
+  globToRegExp,
   ConfigError,
 } from "../src/config.mjs";
 
@@ -267,6 +268,167 @@ test("rejects a workspace with neither repo nor path", () => {
     "          - title: a",
     "workspaces:",
     "  - defaultLayout: x",
+  ].join("\n");
+  assert.throws(() => validateConfig(parseYaml(text)), ConfigError);
+});
+
+// --- layoutMatching: branch-pattern -> layout -----------------------------
+
+// A minimal valid layout block in block YAML (the parser has no flow support).
+const layoutY = (id) =>
+  [`  - id: ${id}`, "    tabs:", "      - panes:", "          - title: a"].join("\n");
+
+test("globToRegExp matches the whole branch, * spans any chars, ? one", () => {
+  const re = globToRegExp("fix/rwr-*");
+  assert.ok(re.test("fix/rwr-142-login"));
+  assert.ok(re.test("fix/rwr-"));
+  assert.ok(!re.test("hotfix/rwr-1"), "not a prefix match");
+  assert.ok(!re.test("fix/rwr"), "full-string anchored");
+  // regex metacharacters in the glob are matched literally
+  assert.ok(globToRegExp("a.b+c").test("a.b+c"));
+  assert.ok(!globToRegExp("a.b").test("axb"));
+  // ? matches exactly one character
+  assert.ok(globToRegExp("v?").test("v2"));
+  assert.ok(!globToRegExp("v?").test("v12"));
+});
+
+// repo `rf` with three layouts: default, fix, docs.
+const MATCH_CFG = [
+  "layouts:",
+  layoutY("rf"),
+  layoutY("rf-fix"),
+  layoutY("rf-docs"),
+  "workspaces:",
+  "  - repo: ~/dev/web-app",
+  "    defaultLayout: rf",
+  "    layoutMatching:",
+  "      - title: Fix",
+  "        worktreePattern: fix/rwr-*",
+  "        layout: rf-fix",
+  "      - title: Docs",
+  "        worktreePattern: docs/*",
+  "        layout: rf-docs",
+].join("\n");
+
+function matchBranch(cfgText, branch) {
+  const cfg = validateConfig(parseYaml(cfgText));
+  return matchWorkspaceLayout(cfg, {
+    checkoutPath: path.join(homedir(), ".herdr/worktrees/web-app/wt"),
+    repoRoot: path.join(homedir(), "dev/web-app"),
+    repoName: "web-app",
+    branch,
+  });
+}
+
+test("layoutMatching applies the first pattern that matches the branch", () => {
+  assert.equal(matchBranch(MATCH_CFG, "fix/rwr-9-login").layout.id, "rf-fix");
+  assert.equal(matchBranch(MATCH_CFG, "docs/architecture").layout.id, "rf-docs");
+});
+
+test("layoutMatching falls back to defaultLayout when nothing matches", () => {
+  assert.equal(matchBranch(MATCH_CFG, "main").layout.id, "rf");
+});
+
+test("a worktree with no branch uses defaultLayout", () => {
+  assert.equal(matchBranch(MATCH_CFG, null).layout.id, "rf");
+});
+
+test("layoutMatching honors user order (first match wins)", () => {
+  // Both rules match `feat/x`; the first one listed must win.
+  const cfg = [
+    "layouts:",
+    layoutY("first"),
+    layoutY("second"),
+    "workspaces:",
+    "  - repo: /dev/r",
+    "    layoutMatching:",
+    "      - worktreePattern: feat/*",
+    "        layout: first",
+    "      - worktreePattern: feat/x",
+    "        layout: second",
+  ].join("\n");
+  const match = matchWorkspaceLayout(validateConfig(parseYaml(cfg)), {
+    repoRoot: "/dev/r",
+    repoName: "r",
+    branch: "feat/x",
+  });
+  assert.equal(match.layout.id, "first");
+});
+
+test("a workspace with only layoutMatching yields null when nothing matches", () => {
+  const cfg = [
+    "layouts:",
+    layoutY("only"),
+    "workspaces:",
+    "  - repo: /dev/r",
+    "    layoutMatching:",
+    "      - worktreePattern: release/*",
+    "        layout: only",
+  ].join("\n");
+  const config = validateConfig(parseYaml(cfg));
+  // branch matches -> applies
+  assert.equal(
+    matchWorkspaceLayout(config, { repoRoot: "/dev/r", repoName: "r", branch: "release/1" }).layout
+      .id,
+    "only",
+  );
+  // branch doesn't match and there's no defaultLayout -> nothing applies
+  assert.equal(
+    matchWorkspaceLayout(config, { repoRoot: "/dev/r", repoName: "r", branch: "main" }),
+    null,
+  );
+});
+
+test("a more specific workspace that yields no layout defers to a less specific default", () => {
+  // path /wt/r/special (more specific) only has layoutMatching and won't match
+  // `main`, so the broader /wt/r default applies -- mirrors pre-existing
+  // skip-the-workspace-without-a-layout behavior.
+  const cfg = [
+    "layouts:",
+    layoutY("broad"),
+    layoutY("narrow"),
+    "workspaces:",
+    "  - path: /wt/r",
+    "    defaultLayout: broad",
+    "  - path: /wt/r/special",
+    "    layoutMatching:",
+    "      - worktreePattern: feat/*",
+    "        layout: narrow",
+  ].join("\n");
+  const config = validateConfig(parseYaml(cfg));
+  // under the more specific path, but on `main` -> narrow doesn't match -> broad
+  assert.equal(
+    matchWorkspaceLayout(config, { checkoutPath: "/wt/r/special/x", branch: "main" }).layout.id,
+    "broad",
+  );
+  // on a feat branch -> the more specific workspace's rule wins
+  assert.equal(
+    matchWorkspaceLayout(config, { checkoutPath: "/wt/r/special/x", branch: "feat/y" }).layout.id,
+    "narrow",
+  );
+});
+
+test("rejects layoutMatching referencing an unknown layout", () => {
+  const text = [
+    "layouts:",
+    layoutY("known"),
+    "workspaces:",
+    "  - repo: /dev/r",
+    "    layoutMatching:",
+    "      - worktreePattern: feat/*",
+    "        layout: nope",
+  ].join("\n");
+  assert.throws(() => validateConfig(parseYaml(text)), ConfigError);
+});
+
+test("rejects a layoutMatching rule missing worktreePattern", () => {
+  const text = [
+    "layouts:",
+    layoutY("known"),
+    "workspaces:",
+    "  - repo: /dev/r",
+    "    layoutMatching:",
+    "      - layout: known",
   ].join("\n");
   assert.throws(() => validateConfig(parseYaml(text)), ConfigError);
 });

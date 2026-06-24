@@ -46,6 +46,10 @@ try {
       .filter(Boolean)
       .join("  ");
     process.stdout.write(`  ${target} -> ${ws.defaultLayout ?? "(none)"}\n`);
+    for (const rule of ws.layoutMatching) {
+      const title = rule.title ? ` (${rule.title})` : "";
+      process.stdout.write(`      branch ~ ${rule.worktreePattern} -> ${rule.layout}${title}\n`);
+    }
   }
   process.stdout.write("\nConfig is valid.\n");
 } catch (err) {

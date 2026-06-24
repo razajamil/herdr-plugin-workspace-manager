@@ -108,7 +108,34 @@
         },
         "defaultLayout": {
           "type": "string",
-          "description": "Layout id applied to matching new worktrees."
+          "description": "Layout id applied to a matching new worktree when no layoutMatching rule matches its branch."
+        },
+        "layoutMatching": {
+          "type": "array",
+          "description": "Ordered branch-pattern rules. The first rule whose worktreePattern matches the new worktree's branch wins; if none match, defaultLayout applies.",
+          "items": { "$ref": "#/$defs/matchRule" }
+        }
+      }
+    },
+    "matchRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worktreePattern", "layout"],
+      "description": "Apply `layout` when the new worktree's branch matches `worktreePattern`.",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Optional label for this rule (documentation only)."
+        },
+        "worktreePattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Glob matched (full-string) against the new worktree's branch name. * = any characters, ? = a single character. e.g. \"fix/rwr-*\"."
+        },
+        "layout": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Layout id applied when this pattern matches the branch."
         }
       }
     }

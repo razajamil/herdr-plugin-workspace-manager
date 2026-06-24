@@ -61,12 +61,32 @@ layouts:
           - title: lazygit
             command: lazygit
 
+  # A trimmed variant for quick bug-fix branches: just an agent + editor.
+  - id: web-app-hotfix
+    tabs:
+      - title: code
+        panes:
+          - title: agent
+            command: claude
+          - title: editor
+            command: nvim
+            split: vertical
+
+  # A docs/research variant: an editor and a shell, no dev server.
+  - id: web-app-docs
+    tabs:
+      - title: docs
+        panes:
+          - title: editor
+            command: nvim
+          - title: shell
+            split: vertical
+
 # ---------------------------------------------------------------------------
-# workspaces: map a repo (or a worktree directory) to a default layout.
+# workspaces: map a repo (or a worktree directory) to a layout.
 #
 # When a new linked worktree is created, its repo is matched against these
-# entries and the `defaultLayout` is applied. Each entry needs `repo` and/or
-# `path`:
+# entries. Each entry needs `repo` and/or `path`:
 #
 #   repo: the repo's main checkout path (its repo_root) -- RECOMMENDED. Stable
 #         regardless of where herdr stores worktrees. A bare repo name (e.g.
@@ -76,7 +96,26 @@ layouts:
 #         worktrees dir is configurable).
 #
 # A `repo` match wins over a `path` match if both are present.
+#
+# Picking the layout for a matched workspace:
+#   layoutMatching (optional): an ordered list of branch-pattern rules. The
+#     first rule whose `worktreePattern` matches the new worktree's BRANCH name
+#     wins. `worktreePattern` is a glob matched against the whole branch name:
+#       *  matches any run of characters (including "/")
+#       ?  matches a single character
+#     e.g. `fix/rwr-*` matches `fix/rwr-142-login` but not `hotfix/rwr-1`.
+#     Ordering is yours -- list the most specific rules first.
+#   defaultLayout (optional): applied when no layoutMatching rule matches (or
+#     the worktree has no branch). If there's also no defaultLayout, nothing is
+#     applied to that worktree.
 # ---------------------------------------------------------------------------
 workspaces:
   - repo: ~/code/web-app
     defaultLayout: web-app
+    layoutMatching:
+      - title: Hotfix branches
+        worktreePattern: fix/rwr-*
+        layout: web-app-hotfix
+      - title: Docs / research branches
+        worktreePattern: docs/*
+        layout: web-app-docs

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- Pick a workspace's layout by **branch** name. A `workspaces[]` entry may now
+  carry `layoutMatching` — an ordered list of `{ title?, worktreePattern, layout }`
+  rules. When a new worktree is created, the first rule whose `worktreePattern`
+  (a glob: `*` = any characters, `?` = one) matches the worktree's branch wins;
+  if none match (or the worktree has no branch) the existing `defaultLayout`
+  applies, and with neither, nothing is applied as before. Ordering is yours —
+  list the most specific patterns first.
+
 ## [0.2.2] - 2026-06-23
 
 - Add an [`install.sh`](./install.sh) helper that puts the

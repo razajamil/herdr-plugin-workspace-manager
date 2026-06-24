@@ -77,6 +77,29 @@ export function getWorkspaceInfo(env = process.env, workspaceId) {
   };
 }
 
+// The git branch of a workspace's worktree. herdr's `workspace get`/`list` omit
+// the branch from the nested worktree record, so we read it from `worktree list`
+// (scoped to the workspace's repo) and match on the open workspace id, falling
+// back to the checkout path. Returns null for a detached HEAD or when it can't
+// be resolved -- callers then fall back to the workspace's defaultLayout. This
+// is only queried when the config actually uses branch-based layoutMatching.
+export function getWorktreeBranch(env = process.env, workspaceId, checkoutPath = null) {
+  let worktrees;
+  try {
+    const args = ["worktree", "list", "--json"];
+    if (workspaceId) args.push("--workspace", workspaceId);
+    worktrees = runHerdrJson(args, { env })?.worktrees ?? [];
+  } catch {
+    return null;
+  }
+  const wt =
+    (workspaceId && worktrees.find((w) => w.open_workspace_id === workspaceId)) ||
+    (checkoutPath &&
+      worktrees.find((w) => w.path && path.resolve(w.path) === path.resolve(checkoutPath))) ||
+    null;
+  return wt?.branch || null; // "" (detached) -> null
+}
+
 // "Decided" cache (by workspace id) for the high-frequency workspace.focused
 // event: once we've handled a workspace once, repeat focuses skip immediately
 // without re-querying. Workspace ids are stable per logical workspace, so this

@@ -12,7 +12,7 @@
 //   cwd:       HERDR_WSM_CWD       | workspace checkout path
 
 import { loadConfig, findLayout, matchWorkspaceLayout } from "../src/config.mjs";
-import { resolveTarget, applyLayout } from "../src/apply-core.mjs";
+import { resolveTarget, applyLayout, getWorktreeBranch } from "../src/apply-core.mjs";
 
 const env = process.env;
 const log = (msg) => process.stderr.write(`[workspace-manager] ${msg}\n`);
@@ -53,10 +53,14 @@ async function main() {
     }
   } else {
     const wt = ctx.workspace?.worktree ?? {};
+    const branch = config.workspaces.some((ws) => ws.layoutMatching.length)
+      ? getWorktreeBranch(env, target.workspaceId, target.cwd)
+      : null;
     const match = matchWorkspaceLayout(config, {
       checkoutPath: target.cwd,
       repoRoot: wt.repo_root ?? null,
       repoName: wt.repo_name ?? null,
+      branch,
     });
     if (!match) {
       throw new Error(

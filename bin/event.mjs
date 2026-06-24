@@ -18,6 +18,7 @@ import { loadConfig, matchWorkspaceLayout } from "../src/config.mjs";
 import {
   getEventPayload,
   getWorkspaceInfo,
+  getWorktreeBranch,
   resolveTarget,
   applyLayout,
   claimApply,
@@ -56,10 +57,17 @@ async function main() {
   if (!info || !info.checkoutPath) return done(); // not a worktree workspace
   if (!info.isLinkedWorktree) return done(); // the repo's main checkout — never touch
 
+  // The branch is only needed (and only worth an extra herdr query) when some
+  // workspace uses branch-based layoutMatching.
+  const branch = config.workspaces.some((ws) => ws.layoutMatching.length)
+    ? getWorktreeBranch(env, p.workspaceId, info.checkoutPath)
+    : null;
+
   const match = matchWorkspaceLayout(config, {
     checkoutPath: info.checkoutPath,
     repoRoot: info.repoRoot,
     repoName: info.repoName,
+    branch,
   });
   if (!match) return done(`no workspace/default layout matches ${info.checkoutPath}; skipping`);
 
