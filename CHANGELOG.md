@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.3.0] - 2026-06-25
 
 - Pick a workspace's layout by **branch** name. A `workspaces[]` entry may now
   carry `layoutMatching` — an ordered list of `{ title?, worktreePattern, layout }`

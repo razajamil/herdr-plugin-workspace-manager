@@ -1,6 +1,6 @@
 {
   "name": "herdr-plugin-workspace-manager",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Declarative herdr tab/pane layouts with per-workspace defaults applied on worktree creation.",
