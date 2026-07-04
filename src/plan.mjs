@@ -13,7 +13,7 @@
 // Step kinds:
 //   { kind: "reuse-tab",  tab,            title }                 rename existing root tab
 //   { kind: "create-tab", tab, pane,      title, cwd }            herdr tab create
-//   { kind: "split",      pane, from, direction, ratio, cwd }     herdr pane split
+//   { kind: "split", pane, from, direction, ratio, size, cwd }    herdr pane split
 //   { kind: "rename-pane", pane,          title }                 herdr pane rename
 //   { kind: "run-setup",  pane, command,  blocking }              run setup cmd (+ wait)
 //   { kind: "run",        pane,           command }               herdr pane run
@@ -61,6 +61,7 @@ export function buildPlan(layout, { cwd = null } = {}) {
           from: paneHandle(ti, pj - 1),
           direction: pane.split ?? "right",
           ratio: pane.ratio,
+          size: pane.size,
           cwd,
         });
       }
@@ -86,4 +87,33 @@ export function buildPlan(layout, { cwd = null } = {}) {
   });
 
   return { layoutId: layout.id, steps };
+}
+
+// Clamp a split ratio into herdr's usable open interval (0, 1). A fixed cell
+// size that meets or exceeds the available space would otherwise produce a
+// degenerate 0-width pane; clamping keeps both panes visible.
+export function clampRatio(r) {
+  if (!Number.isFinite(r)) return null;
+  return Math.min(0.99, Math.max(0.01, r));
+}
+
+// Resolve the `--ratio` to pass to `herdr pane split`. herdr's ratio is the
+// fraction the PREVIOUS (from) pane keeps; the newly created pane gets the rest.
+// A pane's `size` sizes the NEW pane, so it's inverted here:
+//   percent p -> new pane is p%      -> from pane keeps (1 - p/100)
+//   cells   w -> new pane is w cells -> from pane keeps (1 - w/extent)
+// `extent` is the from pane's current size (columns/rows) along the split axis,
+// needed only for a cell size; the runner queries it live. Legacy `ratio`
+// (already the from-pane share) is passed through unchanged. Returns a number in
+// (0, 1), or null when nothing sizes the split (or a cell size can't be
+// converted because the extent is unknown).
+export function splitRatioArg({ ratio = null, size = null } = {}, extent = null) {
+  if (ratio != null) return ratio;
+  if (!size) return null;
+  if (size.kind === "percent") return clampRatio(1 - size.value / 100);
+  if (size.kind === "cells") {
+    if (!Number.isFinite(extent) || extent <= 0) return null;
+    return clampRatio(1 - size.value / extent);
+  }
+  return null;
 }

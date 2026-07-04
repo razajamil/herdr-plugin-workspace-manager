@@ -23,6 +23,16 @@
 #   horizontal -> panes stacked top/bottom  (herdr --direction down)
 #   right / down are also accepted literally.
 #
+# pane.size (optional): how big THIS pane is along the split axis -- columns for
+# a vertical split, rows for a horizontal one. Three forms:
+#   40      -> fixed 40 cells (columns/rows)
+#   "30%"   -> 30% of the space being split
+#   0.3     -> a fraction, same as "30%"
+# A fixed cell size is converted from the pane's live size at creation; on a
+# later window resize herdr rebalances proportionally. (The legacy `ratio` field
+# still works but is the inverse -- the fraction the PREVIOUS pane keeps -- so
+# prefer `size`. A pane can't set both.)
+#
 # setup (optional, per layout):
 #   Runs ONE command on the single pane marked `setup: true`.
 #   If `blocking: true`, no further tabs/panes are spawned until the setup
@@ -43,12 +53,14 @@ layouts:
           - title: editor
             command: nvim
             split: vertical
+            size: "60%"        # editor takes 60% of the width; agent gets the rest
       - title: server
         panes:
           - title: dev
             command: npm run dev
           - title: shell
             split: horizontal
+            size: 12            # a fixed 12-row shell under the dev server
       - title: review
         panes:
           - title: agent

@@ -83,6 +83,52 @@ function normalizeSetup(raw, layoutId) {
   return { command, blocking };
 }
 
+// Parse a pane `size` (the extent of THIS pane along the split axis: columns
+// for a vertical/right split, rows for a horizontal/down split). Accepts three
+// forms, normalized to { kind, value }:
+//   "30%" (string)      -> { kind: "percent", value: 30 }
+//   0.3   (0 < n < 1)   -> { kind: "percent", value: 30 }   (a fraction)
+//   40    (integer >=1) -> { kind: "cells",   value: 40 }    (fixed columns/rows)
+// The runner turns this into a herdr `--ratio` (a percent needs no lookup; a
+// cell count is converted against the pane's live size at creation time).
+function normalizeSize(raw, where) {
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (s.endsWith("%")) {
+      const pct = Number(s.slice(0, -1).trim());
+      if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
+        throw new ConfigError(`${where}: percentage must be between 0 and 100 (got "${raw}")`);
+      }
+      return { kind: "percent", value: pct };
+    }
+    const n = Number(s);
+    if (s === "" || !Number.isFinite(n)) {
+      throw new ConfigError(
+        `${where}: must be a number of cells (e.g. 40), a fraction (e.g. 0.3), or a percentage (e.g. "30%")`,
+      );
+    }
+    return numericSize(n, raw, where);
+  }
+  if (typeof raw === "number") return numericSize(raw, raw, where);
+  throw new ConfigError(
+    `${where}: must be a number of cells (e.g. 40), a fraction (e.g. 0.3), or a percentage (e.g. "30%")`,
+  );
+}
+
+function numericSize(n, raw, where) {
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new ConfigError(`${where}: must be a positive number (got ${JSON.stringify(raw)})`);
+  }
+  if (n < 1) return { kind: "percent", value: n * 100 }; // fraction of the axis
+  if (!Number.isInteger(n)) {
+    throw new ConfigError(
+      `${where}: a fixed cell count must be a whole number (got ${n}); use a value below 1 ` +
+        `or an "N%" string for a proportion`,
+    );
+  }
+  return { kind: "cells", value: n };
+}
+
 function normalizePane(raw, layoutId, tabTitle, index) {
   if (typeof raw !== "object" || raw == null || Array.isArray(raw)) {
     throw new ConfigError(
@@ -95,6 +141,7 @@ function normalizePane(raw, layoutId, tabTitle, index) {
     setup: raw.setup === undefined ? false : Boolean(raw.setup),
     split: null,
     ratio: null,
+    size: null,
   };
   if (raw.split != null) {
     const mapped = SPLIT_ALIASES[String(raw.split).toLowerCase()];
@@ -106,6 +153,11 @@ function normalizePane(raw, layoutId, tabTitle, index) {
     }
     pane.split = mapped;
   }
+  if (raw.ratio != null && raw.size != null) {
+    throw new ConfigError(
+      `layout "${layoutId}", tab "${tabTitle}": set either "ratio" or "size", not both`,
+    );
+  }
   if (raw.ratio != null) {
     const ratio = Number(raw.ratio);
     if (!Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) {
@@ -114,6 +166,9 @@ function normalizePane(raw, layoutId, tabTitle, index) {
       );
     }
     pane.ratio = ratio;
+  }
+  if (raw.size != null) {
+    pane.size = normalizeSize(raw.size, `layout "${layoutId}", tab "${tabTitle}": size`);
   }
   return pane;
 }

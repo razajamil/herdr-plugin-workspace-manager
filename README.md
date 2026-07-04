@@ -153,7 +153,8 @@ below.
 | `panes[].command` | pane | Optional command to run in the pane. |
 | `panes[].setup` | pane | Marks the single pane that runs `setup.command` (at most one per layout). |
 | `panes[].split` | pane | For panes after the first: `vertical` \| `horizontal` \| `right` \| `down`. |
-| `panes[].ratio` | pane | Optional split ratio `(0, 1)`. |
+| `panes[].size` | pane | Optional size of **this** pane along the split axis: fixed cells (`40`), a fraction (`0.3`), or a percentage (`"30%"`). See **Pane sizing**. |
+| `panes[].ratio` | pane | Legacy split ratio `(0, 1)` — the fraction the **previous** pane keeps. Prefer `size` (mutually exclusive with it). |
 | `workspaces[].repo` | workspace | **Recommended.** Repo root (`~` expanded) or bare repo name. Matches any *linked worktree* of that repo; the main checkout is never touched. |
 | `workspaces[].path` | workspace | Alternative: prefix-match the worktree's checkout path. |
 | `workspaces[].defaultLayout` | workspace | Layout id applied to a matching new worktree when no `layoutMatching` rule matches its branch. |
@@ -179,6 +180,38 @@ matches a single one, so `fix/rwr-*` matches `fix/rwr-142-login` but not
 `vertical → right` (side by side) and `horizontal → down` (stacked); `right`/`down`
 are also accepted. The first pane of a tab is never split; each later pane splits
 from the previous one.
+
+**Pane sizing.** By default each split is even (50/50). Give a pane a `size` to
+size **that** pane along the split axis — columns for a `vertical`/`right` split,
+rows for a `horizontal`/`down` split. `size` takes three forms:
+
+| `size` value | Meaning |
+| --- | --- |
+| `40` (whole number) | **Fixed** — 40 cells (columns for a vertical split, rows for a horizontal one). |
+| `"30%"` (string) | **Percentage** — 30% of the space being split. |
+| `0.3` (0 < n < 1) | **Fraction** — the same as `"30%"`. |
+
+```yaml
+panes:
+  - title: editor
+  - title: sidebar
+    split: vertical
+    size: 40        # a 40-column sidebar
+  - title: terminal
+    split: horizontal
+    size: "25%"     # bottom terminal takes 25% of the height
+```
+
+A percentage/fraction is applied directly. A **fixed** cell size is converted to
+a ratio from the pane's *live* size at creation time — so it lands on ~N cells
+when the layout is built; if you later resize the window, herdr rebalances the
+panes proportionally (the plugin doesn't manage them afterwards). A fixed size
+larger than the available space is clamped so both panes stay visible.
+
+`size` refers to the pane you put it on. The older `ratio` field is the opposite
+— it's herdr's raw ratio, the fraction the **previous** pane keeps — so `ratio:
+0.3` makes the previous pane 30% and *this* pane 70%. `ratio` still works but a
+pane can't set both; prefer `size`.
 
 **Setup pane.** At most one pane per layout may set `setup: true`. The setup
 command runs there first; with `blocking: true` the hook waits for it to finish

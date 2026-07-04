@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- Size panes with a new `size` field. A pane may set `size` to a fixed cell
+  count (`40`), a percentage (`"30%"`), or a fraction (`0.3`) to size **that**
+  pane along the split axis — columns for a vertical split, rows for a horizontal
+  one. Percentages/fractions apply directly; a fixed cell size is converted to a
+  ratio from the pane's live size at creation (and clamped so both panes stay
+  visible). The legacy `ratio` field still works but is the inverse (the fraction
+  the previous pane keeps); a pane can't set both, and `size` is preferred.
+
 ## [0.3.0] - 2026-06-25
 
 - Pick a workspace's layout by **branch** name. A `workspaces[]` entry may now

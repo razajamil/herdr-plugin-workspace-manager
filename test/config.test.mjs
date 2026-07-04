@@ -70,6 +70,71 @@ test("accepts literal right/down and validates ratio", () => {
   assert.equal(config.layouts[0].tabs[0].panes[1].ratio, 0.3);
 });
 
+test("parses pane size in cells, percent, and fraction forms", () => {
+  const config = validateConfig(
+    parseYaml(
+      [
+        "layouts:",
+        "  - id: x",
+        "    tabs:",
+        "      - title: t",
+        "        panes:",
+        "          - title: a",
+        "          - title: cells",
+        "            split: vertical",
+        "            size: 40",
+        "          - title: percent",
+        "            split: vertical",
+        '            size: "30%"',
+        "          - title: fraction",
+        "            split: vertical",
+        "            size: 0.25",
+      ].join("\n"),
+    ),
+  );
+  const panes = config.layouts[0].tabs[0].panes;
+  assert.equal(panes[0].size, null);
+  assert.deepEqual(panes[1].size, { kind: "cells", value: 40 });
+  assert.deepEqual(panes[2].size, { kind: "percent", value: 30 });
+  assert.deepEqual(panes[3].size, { kind: "percent", value: 25 });
+});
+
+test("rejects setting both ratio and size on a pane", () => {
+  const text = [
+    "layouts:",
+    "  - id: x",
+    "    tabs:",
+    "      - title: t",
+    "        panes:",
+    "          - title: a",
+    "          - title: b",
+    "            split: vertical",
+    "            ratio: 0.5",
+    "            size: 40",
+  ].join("\n");
+  assert.throws(() => validateConfig(parseYaml(text)), ConfigError);
+});
+
+test("rejects an out-of-range percent and a fractional cell count", () => {
+  const sized = (v) =>
+    [
+      "layouts:",
+      "  - id: x",
+      "    tabs:",
+      "      - title: t",
+      "        panes:",
+      "          - title: a",
+      "          - title: b",
+      "            split: vertical",
+      `            size: ${v}`,
+    ].join("\n");
+  assert.throws(() => validateConfig(parseYaml(sized('"150%"'))), ConfigError);
+  assert.throws(() => validateConfig(parseYaml(sized('"0%"'))), ConfigError);
+  assert.throws(() => validateConfig(parseYaml(sized("40.5"))), ConfigError); // fixed cells must be whole
+  assert.throws(() => validateConfig(parseYaml(sized("0"))), ConfigError);
+  assert.throws(() => validateConfig(parseYaml(sized('"wide"'))), ConfigError);
+});
+
 test("rejects two setup panes", () => {
   const text = [
     "layouts:",

@@ -72,6 +72,10 @@
     "pane": {
       "type": "object",
       "additionalProperties": false,
+      "not": {
+        "required": ["ratio", "size"],
+        "$comment": "ratio and size are mutually exclusive."
+      },
       "properties": {
         "title": { "type": "string", "description": "Pane label." },
         "command": { "type": "string", "description": "Optional command to run in the pane." },
@@ -88,7 +92,14 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "exclusiveMaximum": 1,
-          "description": "Optional split ratio, between 0 and 1."
+          "description": "Legacy split ratio between 0 and 1: the fraction of the split the PREVIOUS pane keeps (this pane gets the rest). Prefer `size`, which sizes this pane directly. Mutually exclusive with `size`."
+        },
+        "size": {
+          "description": "Size of THIS pane along the split axis (columns for a vertical/right split, rows for a horizontal/down split). A whole number is fixed cells (e.g. 40); a number between 0 and 1 is a fraction (0.3 = 30%); a string like \"30%\" is a percentage. Fixed cell sizes are converted to a ratio from the pane's live size at creation. Mutually exclusive with `ratio`.",
+          "anyOf": [
+            { "type": "number", "exclusiveMinimum": 0 },
+            { "type": "string", "pattern": "^\\s*\\d+(\\.\\d+)?\\s*%\\s*$" }
+          ]
         }
       }
     },

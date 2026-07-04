@@ -1,7 +1,27 @@
-import { ROOT_TAB, ROOT_PANE } from "./plan.mjs";
+import { ROOT_TAB, ROOT_PANE, splitRatioArg } from "./plan.mjs";
 import { runHerdrJson, paneIdOf, tabIdOf } from "./herdr.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Current extent (in cells) of a pane along the axis a split would divide:
+// columns for a "right" split, rows for a "down" split. Used to convert a fixed
+// cell `size` into a --ratio. Returns null if it can't be determined, in which
+// case the split falls back to herdr's default sizing.
+function paneExtent(paneId, direction, env) {
+  let layout;
+  try {
+    layout = runHerdrJson(["pane", "layout", "--pane", paneId], { env })?.layout;
+  } catch {
+    return null;
+  }
+  const rect = layout?.panes?.find((p) => p.pane_id === paneId)?.rect;
+  if (!rect) return null;
+  return direction === "down" ? rect.height : rect.width;
+}
+
+// Format a ratio for the CLI: trim to 4 decimals so a converted cell size
+// doesn't emit a long repeating fraction.
+const fmtRatio = (r) => String(Math.round(r * 1e4) / 1e4);
 
 function intEnv(env, key, fallback) {
   const v = env[key];
@@ -82,7 +102,11 @@ export async function executePlan(plan, target, { env = process.env, logger } = 
       case "split": {
         const fromId = resolvePane(step.from);
         const args = ["pane", "split", fromId, "--direction", step.direction, "--no-focus"];
-        if (step.ratio != null) args.push("--ratio", String(step.ratio));
+        // A fixed cell size needs the from pane's live extent to become a ratio.
+        const extent =
+          step.size?.kind === "cells" ? paneExtent(fromId, step.direction, env) : null;
+        const ratio = splitRatioArg({ ratio: step.ratio, size: step.size }, extent);
+        if (ratio != null) args.push("--ratio", fmtRatio(ratio));
         args.push(...(step.cwd ? ["--cwd", step.cwd] : cwdArgs));
         const result = runHerdrJson(args, { env });
         const paneId = paneIdOf(result);
@@ -90,7 +114,9 @@ export async function executePlan(plan, target, { env = process.env, logger } = 
           throw new Error(`pane split did not return a pane id: ${JSON.stringify(result)}`);
         }
         handles.set(step.pane, paneId);
-        log(`split ${fromId} ${step.direction} -> ${paneId}`);
+        log(
+          `split ${fromId} ${step.direction}${ratio != null ? ` @${fmtRatio(ratio)}` : ""} -> ${paneId}`,
+        );
         break;
       }
       case "rename-pane": {

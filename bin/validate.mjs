@@ -6,9 +6,18 @@ import { loadConfig, configCandidates } from "../src/config.mjs";
 
 const env = process.env;
 
+function describeSize(size) {
+  if (!size) return null;
+  if (size.kind === "cells") return `size:${size.value}c`;
+  return `size:${size.value}%`;
+}
+
 function describePane(pane) {
   const bits = [pane.title ?? "(untitled)"];
   if (pane.split) bits.push(`split:${pane.split}`);
+  const size = describeSize(pane.size);
+  if (size) bits.push(size);
+  else if (pane.ratio != null) bits.push(`ratio:${pane.ratio}`);
   if (pane.setup) bits.push("setup");
   if (pane.command) bits.push(`$ ${pane.command}`);
   return bits.join("  ");

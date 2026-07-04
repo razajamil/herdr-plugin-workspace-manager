@@ -99,6 +99,7 @@ layouts:
             command: echo a0 > ${m("a0.cmd")}; printf 'A0OUT_%s\\n' '${token}'
           - title: a1
             split: vertical
+            size: 10
             command: echo a1 > ${m("a1.cmd")}
       - title: beta
         panes:
@@ -188,6 +189,18 @@ workspaces:
           `tab ${tab.label} should have 2 panes`,
         );
       }
+
+      // 3b. Sizing: a1 asked for a fixed 10-column width, so it must end up
+      //     narrower than its sibling a0 (which keeps the rest). This exercises
+      //     the live cells->ratio conversion (paneExtent) end-to-end.
+      const alpha = herdr(["pane", "layout", "--pane", summary.handles.t0p0]).layout;
+      const widthOf = (id) => alpha.panes.find((p) => p.pane_id === id)?.rect?.width;
+      const a0w = widthOf(summary.handles.t0p0);
+      const a1w = widthOf(summary.handles.t0p1);
+      assert.ok(
+        Number.isFinite(a0w) && Number.isFinite(a1w) && a1w < a0w,
+        `sized pane a1 (${a1w}) should be narrower than a0 (${a0w})`,
+      );
 
       // 4. Idempotency: a second event (e.g. the workspace.created the CLI also
       //    fires) must be a no-op via the claim, not a doubled layout.
