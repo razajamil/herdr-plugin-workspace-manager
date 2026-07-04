@@ -1,6 +1,6 @@
 id = "herdr-plugin-workspace-manager"
 name = "Workspace Manager"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.7.0"
 description = "Declarative tab/pane layouts with per-workspace defaults applied automatically when a worktree is created."
 platforms = ["linux", "macos"]

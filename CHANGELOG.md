@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-04
 
 - Size panes with a new `size` field. A pane may set `size` to a fixed cell
   count (`40`), a percentage (`"30%"`), or a fraction (`0.3`) to size **that**
