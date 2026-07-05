@@ -18,23 +18,26 @@ BIN_DIR="${1:-$HOME/.local/bin}"
 # else ask herdr where the installed/linked plugin lives (so `curl | sh` works).
 root=""
 script_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || script_dir=""
-if [ -n "$script_dir" ] && [ -f "$script_dir/bin/$BIN_NAME.mjs" ]; then
+if [ -n "$script_dir" ] && [ -f "$script_dir/bin/$BIN_NAME" ]; then
   root="$script_dir"
-elif command -v herdr >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+elif command -v herdr >/dev/null 2>&1; then
   root=$(herdr plugin list --plugin "$PLUGIN_ID" --json 2>/dev/null \
-    | node -pe 'JSON.parse(require("fs").readFileSync(0)).result.plugins[0].plugin_root' 2>/dev/null) || root=""
+    | sed -n 's/.*"plugin_root"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1) || root=""
 fi
 
-if [ -z "$root" ] || [ ! -f "$root/bin/$BIN_NAME.mjs" ]; then
+if [ -z "$root" ] || [ ! -f "$root/bin/$BIN_NAME" ]; then
   echo "error: couldn't locate the $PLUGIN_ID plugin." >&2
   echo "Install it first, then re-run this script:" >&2
   echo "  herdr plugin install razajamil/$PLUGIN_ID" >&2
   exit 1
 fi
 
+# Build the binary now so the first plugin event / CLI call doesn't pay for it.
+sh "$root/bin/$BIN_NAME" --help >/dev/null
+
 mkdir -p "$BIN_DIR"
-ln -sf "$root/bin/$BIN_NAME.mjs" "$BIN_DIR/$BIN_NAME"
-echo "✓ linked $BIN_NAME -> $root/bin/$BIN_NAME.mjs ($BIN_DIR)"
+ln -sf "$root/bin/$BIN_NAME" "$BIN_DIR/$BIN_NAME"
+echo "✓ linked $BIN_NAME -> $root/bin/$BIN_NAME ($BIN_DIR)"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) echo "  $BIN_DIR is on your PATH — run: $BIN_NAME --help" ;;

@@ -1,0 +1,38 @@
+#!/bin/sh
+# Shim entrypoint for the plugin + CLI. Builds the Rust binary on first use
+# (and again after an update touches Cargo.toml/src), then execs it with the
+# original arguments. herdr invokes this via `sh bin/herdr-workspace-manager
+# <subcommand>` with the plugin root as the working directory; install.sh
+# symlinks it onto your PATH for the CLI.
+set -eu
+
+# Resolve symlinks (install.sh links this shim into ~/.local/bin) so `root`
+# is the plugin checkout, not the symlink's directory.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+
+root=$(cd "$(dirname "$self")/.." && pwd)
+bin="$root/target/release/herdr-workspace-manager"
+
+needs_build() {
+  [ ! -x "$bin" ] && return 0
+  # Rebuild when the source is newer than the binary (e.g. after `git pull`).
+  [ -n "$(find "$root/Cargo.toml" "$root/src" -newer "$bin" 2>/dev/null | head -n 1)" ]
+}
+
+if needs_build; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "[workspace-manager] cargo not found — install Rust (https://rustup.rs) so the plugin can build itself" >&2
+    exit 1
+  fi
+  echo "[workspace-manager] building the plugin binary (one-off after install/update)..." >&2
+  cargo build --release --quiet --manifest-path "$root/Cargo.toml" >&2
+fi
+
+exec "$bin" "$@"

@@ -26,16 +26,18 @@ every new worktree into a declarative layout — and cleans up the ones you're d
   fully arranged. No rebuilding your working view by hand each time.
 - **Picked by branch.** Route `fix/*` branches to a trimmed layout and `docs/*`
   to another; the first matching rule wins.
-- **One-off setup.** Run e.g. `npm install` in a chosen pane before the rest of
-  the layout spawns — optionally blocking until it finishes.
+- **Zero dependencies except Rust.** No Node, no npm — the plugin is a single
+  native binary it compiles itself on first use, then runs with no runtime deps.
 - **Cleanup after the merge.** `herdr-workspace-manager remove-gone` removes the
   worktrees whose upstream branch is gone, leaving the main checkout and
   anything in progress untouched.
 
 ## Install
 
-Requires **herdr ≥ 0.7.0** and **Node ≥ 18** on your `PATH`. No other
-dependencies, no build step.
+Requires **herdr ≥ 0.7.0** and a **Rust toolchain** (`cargo`, [rustup.rs](https://rustup.rs))
+on your `PATH`. The plugin compiles itself on first use — a one-off
+`cargo build --release` — and runs as a single native binary from then on, with
+no runtime dependencies at all.
 
 ```sh
 herdr plugin install razajamil/herdr-plugin-workspace-manager
@@ -45,7 +47,7 @@ herdr plugin install razajamil/herdr-plugin-workspace-manager
 <summary>Local development / pinning / non-interactive</summary>
 
 ```sh
-# live edits from a clone (link skips any build step)
+# live edits from a clone (the shim rebuilds automatically when src changes)
 git clone https://github.com/razajamil/herdr-plugin-workspace-manager.git
 herdr plugin link ./herdr-plugin-workspace-manager
 
@@ -69,7 +71,7 @@ herdr plugin config-dir herdr-plugin-workspace-manager
 layouts:
   - id: web-app
     setup:
-      command: npm install   # optional one-off, run before the rest of the layout
+      command: make setup   # optional one-off, run before the rest of the layout
       blocking: true         # if true, no other panes spawn until it finishes
     tabs:
       - title: code
@@ -83,7 +85,7 @@ layouts:
       - title: server
         panes:
           - title: dev
-            command: npm run dev
+            command: make dev
           - title: shell
             split: horizontal  # stacked below the dev server
       - title: git
@@ -164,8 +166,9 @@ Layouts work without the CLI — it's only needed for cleanup.
 
 ## Highlights
 
-- **Zero dependencies, no build step.** Pure ESM (including a small YAML-subset
-  parser), so a `herdr plugin link`-ed clone works immediately, live-editable.
+- **No runtime dependencies.** A single native Rust binary (including a small
+  YAML-subset parser); the shim entrypoint builds it on first use, so a
+  `herdr plugin link`-ed clone works with nothing but a Rust toolchain.
 - **CLI and TUI worktrees both covered.** herdr emits different events for the
   two creation paths; the plugin subscribes to all of them and dedupes with an
   atomic claim, so a layout is applied exactly once per worktree.
@@ -407,7 +410,7 @@ So the hook listens for `worktree.created`, `workspace.created`, **and**
 > worktree create` still works via the other two events.
 
 ```
- new worktree (CLI or TUI) ──► event hook (bin/event.mjs)
+ new worktree (CLI or TUI) ──► event hook (herdr-workspace-manager event)
         ▼
    load config ─► match workspaces[] (repo or path) ─► default layout
         │                                                   │
@@ -427,7 +430,7 @@ panes — the plugin doesn't manage their lifecycle afterwards.
 
 A herdr plugin is ordinary code that runs on your machine with your environment
 and can call the full herdr CLI. This plugin runs the commands you put in your
-`config.yml` (e.g. `npm install`, `nvim`) in your worktrees. Review the manifest
+`config.yml` (e.g. `make setup`, `nvim`) in your worktrees. Review the manifest
 and `config.yml` before use — you control exactly what runs.
 
 ## Notes & limitations
@@ -435,15 +438,16 @@ and `config.yml` before use — you control exactly what runs.
 - The first tab/pane of a layout reuses the worktree's existing root tab/pane;
   additional tabs/panes are created.
 - Layouts are applied additively; the plugin does not tear panes down.
-- Pure ESM, no runtime dependencies (includes a small YAML-subset parser), so it
-  works immediately under `herdr plugin link` with no build step.
+- A single Rust binary with no runtime dependencies (includes a small
+  YAML-subset parser). The `bin/herdr-workspace-manager` shim compiles it on
+  first use, so it works under `herdr plugin link` with just a Rust toolchain.
 
 ## Development
 
 ```sh
-npm run test:unit        # YAML parser, config validation, planner, guards (no herdr needed)
-npm run test:integration # live: creates a real herdr worktree and drives the hook end-to-end
-npm test                 # both
+cargo test                                    # unit tests + integration test
+cargo test --bin herdr-workspace-manager      # unit tests only (no herdr needed)
+cargo test --test integration                 # live: creates a real herdr worktree and drives the hook end-to-end
 ```
 
 The integration test auto-skips when no herdr server is running; otherwise it
@@ -453,10 +457,10 @@ command actually ran (via marker files), blocking-setup ordering, and
 idempotency — then cleans everything up.
 
 This repo is a self-contained herdr plugin (a `herdr-plugin.toml` manifest plus
-ESM scripts). To list it in the herdr marketplace, the GitHub repo carries the
+a Rust crate). To list it in the herdr marketplace, the GitHub repo carries the
 `herdr-plugin` topic; anyone can then `herdr plugin install <owner>/<repo>`. Unit
-tests run in CI (`.github/workflows/ci.yml`); the integration test needs a local
-herdr server and is run manually.
+tests run in CI (`.github/workflows/ci.yml`); the integration test auto-skips
+there and needs a local herdr server to run for real.
 
 ## Credits
 

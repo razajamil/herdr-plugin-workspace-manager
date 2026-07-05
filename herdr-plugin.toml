@@ -5,12 +5,16 @@ min_herdr_version = "0.7.0"
 description = "Declarative tab/pane layouts with per-workspace defaults applied automatically when a worktree is created."
 platforms = ["linux", "macos"]
 
+# All entrypoints go through bin/herdr-workspace-manager, an sh shim that
+# compiles the Rust binary on first use (cargo build --release) and execs it.
+# After that one-off build there is no runtime dependency at all.
+
 # Fires for every new worktree. The handler matches the new worktree's checkout
 # path against the configured workspaces and, if a default layout is set, applies
 # it (creates the tabs/panes and runs their commands).
 [[events]]
 on = "worktree.created"
-command = ["node", "bin/event.mjs"]
+command = ["sh", "bin/herdr-workspace-manager", "event"]
 
 # The herdr UI "new worktree" command creates the worktree in-app and emits
 # NEITHER worktree.created nor workspace.created to plugins — the only event it
@@ -19,11 +23,11 @@ command = ["node", "bin/event.mjs"]
 # path). The hook dedupes, so the extra events are harmless.
 [[events]]
 on = "workspace.created"
-command = ["node", "bin/event.mjs"]
+command = ["sh", "bin/herdr-workspace-manager", "event"]
 
 [[events]]
 on = "workspace.focused"
-command = ["node", "bin/event.mjs"]
+command = ["sh", "bin/herdr-workspace-manager", "event"]
 
 # Manually apply a layout to the current (or a target) workspace. With no
 # argument it applies the workspace's default layout; pass a layout id to force
@@ -32,13 +36,13 @@ command = ["node", "bin/event.mjs"]
 id = "apply"
 title = "Apply workspace layout"
 contexts = ["workspace"]
-command = ["node", "bin/apply.mjs"]
+command = ["sh", "bin/herdr-workspace-manager", "apply"]
 
 # Parse + validate the config file and print the resolved layouts/workspaces.
 [[actions]]
 id = "validate"
 title = "Validate workspace config"
-command = ["node", "bin/validate.mjs"]
+command = ["sh", "bin/herdr-workspace-manager", "validate"]
 
 # Preview the current repo's linked worktrees whose remote branch was deleted
 # ("gone"). Removes nothing — worktrees that never pushed/tracked a remote are
@@ -50,7 +54,7 @@ command = ["node", "bin/validate.mjs"]
 id = "remove-gone"
 title = "Remove gone worktrees (preview)"
 contexts = ["workspace"]
-command = ["node", "bin/remove-gone.mjs"]
+command = ["sh", "bin/herdr-workspace-manager", "remove-gone", "--preview"]
 
 [[keys.command]]
 key = "prefix+shift+l"

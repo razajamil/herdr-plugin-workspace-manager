@@ -1,0 +1,19 @@
+[package]
+name = "herdr-workspace-manager"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Declarative herdr tab/pane layouts with per-workspace defaults applied on worktree creation."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "herdr-workspace-manager"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+sha1_smol = "1"
+
+[profile.release]
+strip = true

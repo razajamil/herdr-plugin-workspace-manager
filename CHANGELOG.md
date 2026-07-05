@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- **Rewritten in Rust — the Node.js runtime dependency is gone.** The plugin is
+  now a single native binary that a small `sh` shim compiles on first use
+  (one-off `cargo build --release`) and re-uses from then on, so the only
+  requirement is a Rust toolchain at install time and nothing at runtime.
+  Behavior, config format, CLI flags, output, and on-disk state (claim keys,
+  `meta.json`) are unchanged — existing worktrees are not re-applied after
+  upgrading. `install.sh` now builds the binary up front and no longer needs
+  Node either. The full test suite (YAML parser, config validation, planner,
+  guards, remove-gone, live integration) was ported to `cargo test`.
+
 ## [0.4.0] - 2026-07-04
 
 - Size panes with a new `size` field. A pane may set `size` to a fixed cell
