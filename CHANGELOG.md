@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.5.0] - 2026-07-06
 
 - **Rewritten in Rust — the Node.js runtime dependency is gone.** The plugin is
   now a single native binary that a small `sh` shim compiles on first use
