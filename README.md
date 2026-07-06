@@ -357,6 +357,12 @@ Link it elsewhere by passing a directory (`./install.sh ~/bin`); the installer
 works whether the plugin is installed or linked, and warns if the target isn't
 on your `PATH`. Then run `herdr-workspace-manager --help`.
 
+> **Upgrading from a Node install (pre-0.5.0).** The CLI entrypoint moved from
+> `bin/herdr-workspace-manager.mjs` to a `bin/herdr-workspace-manager` shim, so
+> a symlink created by an older `install.sh` now dangles (you'll see "command
+> not found"). Re-run `./install.sh` once to repoint it, then `hash -r` (or open
+> a new shell) so your session forgets the stale path.
+
 **As a plugin action.** The preview is also exposed as a plugin action for the
 TUI action menu / keybindings. It runs headless (no prompt) and removes
 nothing — `action invoke` streams output to the plugin log rather than your
