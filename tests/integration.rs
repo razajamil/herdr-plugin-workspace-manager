@@ -349,9 +349,9 @@ workspaces:
     //    (A0OUT_<token> via printf %s — present in output, not the echoed input).
     let marker = format!("A0OUT_{}", token);
     let w = Command::new(herdr_bin())
-        .args(["wait", "output", t0p0, "--match", &marker, "--timeout", "10000"])
+        .args(["pane", "wait-output", t0p0, "--match", &marker, "--timeout", "10000"])
         .output()
-        .expect("spawn herdr wait");
+        .expect("spawn herdr pane wait-output");
     let w_stdout = String::from_utf8_lossy(&w.stdout);
     assert!(
         w_stdout.contains("output_matched") || w_stdout.contains("matched_line"),
