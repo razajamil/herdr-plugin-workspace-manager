@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [0.5.1] - 2026-07-25
+
+- Fix blocking setup (`setup.blocking: true`), which never worked. It shelled
+  out to `herdr wait output`, a command no released herdr has ever had, so every
+  blocking setup failed with `unknown command: wait` — and because the error
+  propagated out of the plan executor, it took the whole layout apply down with
+  it rather than just the wait. It now calls `herdr pane wait-output`, added in
+  herdr 0.7.5, which returns the same `matched_line` the exit-code parsing
+  already expected. **`min_herdr_version` is now 0.7.5.** The integration test
+  drove the same non-existent command, so it could only pass on a machine with
+  no herdr server; it now exercises the real one.
+
 ## [0.5.0] - 2026-07-06
 
 - **Rewritten in Rust — the Node.js runtime dependency is gone.** The plugin is
