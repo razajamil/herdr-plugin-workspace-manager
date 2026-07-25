@@ -11,10 +11,9 @@
 # ---------------------------------------------------------------------------
 # layouts: named tab/pane templates.
 #
-# The plugin walks each layout depth-first, exactly as if you spawned the
-# tabs/panes by hand:
-#   - The FIRST tab reuses the worktree's existing tab + root pane.
-#   - Each later tab is created with `herdr tab create`.
+# Each tab is built in ONE herdr request from a declarative tree:
+#   - The FIRST tab replaces the worktree's existing tab.
+#   - Each later tab is appended to the workspace.
 #   - The FIRST pane of a tab is that tab's root pane; each later pane splits
 #     from the previous pane in the same tab.
 #
@@ -28,19 +27,39 @@
 #   40      -> fixed 40 cells (columns/rows)
 #   "30%"   -> 30% of the space being split
 #   0.3     -> a fraction, same as "30%"
-# A fixed cell size is converted from the pane's live size at creation; on a
-# later window resize herdr rebalances proportionally. (The legacy `ratio` field
-# still works but is the inverse -- the fraction the PREVIOUS pane keeps -- so
-# prefer `size`. A pane can't set both.)
+# A fixed cell size is converted against the tab's cell area; on a later window
+# resize herdr rebalances proportionally. (The legacy `ratio` field still works
+# but is the inverse -- the fraction the PREVIOUS pane keeps -- so prefer `size`.
+# A pane can't set both.)
+#
+# pane.command: runs in YOUR interactive login shell, so .zshrc/.bash_profile
+#   setup (mise, asdf, nvm, aliases, PATH) applies. When it exits you're left at
+#   a prompt; set `persist: false` to let the pane close with the command.
+#
+# pane.agent (instead of command): starts a recognized coding agent with
+#   `herdr agent start`, which returns only once herdr has detected the agent
+#   and marked it ready for input -- so the layout knows it actually came up.
+#   Supported: pi, claude, codex, gemini, cursor, devin, agy, cline, omp,
+#   mastracode, opencode, copilot, kimi, kiro, droid, amp, grok, hermes, kilo,
+#   qodercli, maki.
+#   Companion keys: agentName (stable alias, [a-z][a-z0-9_-], unique among live
+#   agents), agentArgs (passed through to the agent), prompt (submitted once
+#   ready), agentTimeoutMs, promptTimeoutMs (setting it waits for the agent to
+#   settle; omit to submit and move on).
+#
+# env (optional, per layout and per pane): environment variables for the pane
+#   process. Pane entries win over layout entries. Values need no quoting.
 #
 # setup (optional, per layout):
-#   Runs ONE command on the single pane marked `setup: true`.
-#   If `blocking: true`, no further tabs/panes are spawned until the setup
-#   command finishes. After setup finishes, that pane still runs its own
-#   `command` if it has one. At most ONE pane per layout may set `setup: true`.
+#   Runs ONE command on the single pane marked `setup: true`, before that pane's
+#   own command or agent. If `blocking: true`, no further tabs are spawned until
+#   it finishes. An agent on the setup pane always waits for setup regardless.
+#   At most ONE pane per layout may set `setup: true`.
 # ---------------------------------------------------------------------------
 layouts:
   - id: web-app
+    env:
+      NODE_ENV: development
     setup:
       command: npm install
       blocking: true
@@ -48,7 +67,8 @@ layouts:
       - title: code
         panes:
           - title: agent
-            command: claude
+            agent: claude
+            agentName: web-main
             setup: true
           - title: editor
             command: nvim
@@ -58,13 +78,15 @@ layouts:
         panes:
           - title: dev
             command: npm run dev
+            env:
+              PORT: 3000
           - title: shell
             split: horizontal
             size: 12            # a fixed 12-row shell under the dev server
       - title: review
         panes:
           - title: agent
-            command: opencode
+            agent: opencode
           - title: editor
             command: nvim
             split: vertical
@@ -72,14 +94,17 @@ layouts:
         panes:
           - title: lazygit
             command: lazygit
+            persist: false      # closing lazygit closes the pane
 
-  # A trimmed variant for quick bug-fix branches: just an agent + editor.
+  # A trimmed variant for quick bug-fix branches: just an agent + editor. The
+  # agent is handed the task as soon as herdr reports it ready.
   - id: web-app-hotfix
     tabs:
       - title: code
         panes:
           - title: agent
-            command: claude
+            agent: claude
+            prompt: Read TASK.md and start on the fix described there.
           - title: editor
             command: nvim
             split: vertical

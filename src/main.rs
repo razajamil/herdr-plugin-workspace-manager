@@ -12,6 +12,7 @@ mod herdr;
 mod plan;
 mod remove_gone;
 mod runner;
+mod socket;
 mod yaml;
 
 use std::io::{BufRead, Write};
@@ -19,8 +20,9 @@ use std::io::{BufRead, Write};
 use serde_json::Value;
 
 use crate::apply_core::{
-    apply_layout, claim_apply, get_event_payload, get_worktree_branch, get_workspace_info,
-    is_decided, mark_decided, reap_orphan_claims, release_apply, resolve_target,
+    apply_layout, claim_apply, clear_decided, get_event_payload, get_worktree_branch,
+    get_workspace_info, is_decided, mark_decided, reap_orphan_claims, release_apply,
+    resolve_target, state_dir,
 };
 use crate::config::{
     config_candidates, find_layout, load_config, match_workspace_layout, Config, MatchTarget,
@@ -31,6 +33,7 @@ use crate::remove_gone::{
     apply_removals, collect_gone_worktrees, format_apply_result, format_preview,
     removable_candidates, repo_display_name,
 };
+use crate::runner::{notify, reap_setup_status_files};
 
 const USAGE: &str = "herdr-workspace-manager — Workspace Manager plugin CLI
 
@@ -47,6 +50,8 @@ Commands:
   validate      Parse + validate the config file and print the resolved
                 layouts/workspaces. (plugin action)
   event         Worktree/workspace event hook. (plugin internal)
+  startup       One-shot state cleanup after the herdr server starts.
+                (plugin internal)
 
 Options (remove-gone):
   --dry-run            Only print the list; remove nothing and don't prompt.
@@ -67,6 +72,7 @@ fn main() {
     let env = Env::real();
     let code = match args.first().map(String::as_str) {
         Some("event") => run_logged(|| cmd_event(&env)),
+        Some("startup") => run_logged(|| cmd_startup(&env)),
         Some("apply") => run_logged(|| cmd_apply(&env, args.get(1).map(String::as_str))),
         Some("validate") => cmd_validate(&env),
         Some("remove-gone") => run_logged(|| cmd_remove_gone(&env, &args[1..])),
@@ -102,14 +108,42 @@ fn non_empty(v: Option<&str>) -> Option<&str> {
     v.filter(|s| !s.is_empty())
 }
 
+// --- startup -----------------------------------------------------------------
+// `[[startup]]` hook: runs once per enabled plugin after herdr restores its
+// session and the API socket is ready (and again after a live handoff), never on
+// client attach or config reload.
+//
+// This is where periodic state maintenance belongs. It used to run on every
+// non-hot event invocation, which meant a filesystem sweep during ordinary
+// workspace activity; once per server start is both cheaper and better timed,
+// because a worktree removed while herdr was not running is now noticed before
+// any event can consult a stale claim.
+fn cmd_startup(env: &Env) -> Result<(), String> {
+    let reaped = reap_orphan_claims(env);
+    let forgotten = clear_decided(env);
+    let stale = reap_setup_status_files(&state_dir(env));
+    log(&format!(
+        "startup: reaped {} orphan claim(s), forgot {} decided workspace(s), removed {} stale setup file(s)",
+        reaped, forgotten, stale
+    ));
+    Ok(())
+}
+
 // --- event -------------------------------------------------------------------
 // Event hook for worktree.created, workspace.created AND workspace.focused.
 //
 // Why three events: the `herdr worktree create` CLI emits worktree.created (and
-// workspace.created), but the herdr **UI** "new worktree" command creates the
-// worktree in-app and emits NEITHER to plugins — the only thing it dispatches is
-// workspace.focused (it focuses the new worktree right after creating it). So we
-// listen for all three and resolve the worktree facts by querying the workspace.
+// workspace.created), but the herdr **UI** "new worktree" command has
+// historically created the worktree in-app and emitted NEITHER to plugins — the
+// only thing it dispatches is workspace.focused (it focuses the new worktree
+// right after creating it). So we listen for all three and resolve the worktree
+// facts by querying the workspace.
+//
+// workspace.focused fires on every workspace switch, which makes it by far the
+// most frequent reason this binary runs, so its early-exit path does no work
+// beyond a single `stat`: no config parse, no herdr query. Set
+// HERDR_WSM_FOCUS_HOOK=0 to drop the focus path entirely on a herdr build whose
+// UI worktree creation does emit worktree.created (see the README).
 //
 // Guards (a layout is applied exactly once, only to a brand-new linked worktree):
 //   - linked-worktree only (never the repo's main checkout)
@@ -118,25 +152,24 @@ fn non_empty(v: Option<&str>) -> Option<&str> {
 //   - atomic claim by checkout path (dedupe across the multiple events + restarts)
 //   - "decided" cache by workspace id so repeat focuses don't re-query
 fn cmd_event(env: &Env) -> Result<(), String> {
-    let (config_path, config) = load_config(env)?;
-    if config_path.is_none() {
+    let is_focus = env.get("HERDR_PLUGIN_EVENT").unwrap_or("").contains("focus");
+    if is_focus && env.get("HERDR_WSM_FOCUS_HOOK") == Some("0") {
         return Ok(());
     }
 
-    let is_focus = env.get("HERDR_PLUGIN_EVENT").unwrap_or("").contains("focus");
     let p = get_event_payload(env);
     let Some(workspace_id) = p.workspace_id else { return Ok(()) };
 
-    // Fast path: workspace.focused fires constantly; once a workspace has been
-    // handled, skip without querying anything.
+    // Hot path first: a workspace we've already ruled on costs one stat and
+    // nothing else. Reading the config here would parse YAML on every focus.
     if is_focus && is_decided(env, &workspace_id) {
         return Ok(());
     }
 
-    // Past the hot repeat-focus path: opportunistically drop claims for worktrees
-    // that have since been removed (by us, another plugin, or the user directly),
-    // so a worktree recreated at a reclaimed path isn't wrongly skipped.
-    reap_orphan_claims(env);
+    let (config_path, config) = load_config(env)?;
+    if config_path.is_none() {
+        return Ok(());
+    }
 
     let done = |msg: Option<&str>| {
         if let Some(msg) = msg {
@@ -211,6 +244,13 @@ fn cmd_event(env: &Env) -> Result<(), String> {
         }
         Err(err) => {
             release_apply(env, &checkout_path); // allow a retry on transient failure
+            // A failed apply is otherwise invisible: the hook runs headless and
+            // its stderr only reaches the plugin log.
+            notify(
+                env,
+                "Workspace layout failed",
+                &format!("Layout \"{}\" for {}: {}", layout.id, checkout_path, err),
+            );
             Err(err)
         }
     }
@@ -342,6 +382,11 @@ fn describe_size(size: &Size) -> String {
     }
 }
 
+fn describe_env(env: &std::collections::BTreeMap<String, String>) -> String {
+    let names: Vec<&str> = env.keys().map(String::as_str).collect();
+    format!("env:{}", names.join(","))
+}
+
 fn describe_pane(pane: &Pane) -> String {
     let mut bits = vec![pane.title.clone().unwrap_or_else(|| "(untitled)".to_string())];
     if let Some(split) = pane.split {
@@ -355,8 +400,31 @@ fn describe_pane(pane: &Pane) -> String {
     if pane.setup {
         bits.push("setup".to_string());
     }
+    if !pane.env.is_empty() {
+        bits.push(describe_env(&pane.env));
+    }
+    if let Some(agent) = &pane.agent {
+        let mut agent_bits = format!("@{}", agent.kind);
+        if let Some(name) = &agent.name {
+            agent_bits.push_str(&format!(" as \"{}\"", name));
+        }
+        if !agent.args.is_empty() {
+            agent_bits.push_str(&format!(" -- {}", agent.args.join(" ")));
+        }
+        bits.push(agent_bits);
+        if let Some(prompt) = &agent.prompt {
+            let wait = match agent.prompt_timeout_ms {
+                Some(ms) => format!(" (waits up to {}ms)", ms),
+                None => String::new(),
+            };
+            bits.push(format!("prompt: \"{}\"{}", prompt, wait));
+        }
+    }
     if let Some(command) = &pane.command {
         bits.push(format!("$ {}", command));
+        if !pane.persist {
+            bits.push("(pane closes when it exits)".to_string());
+        }
     }
     bits.join("  ")
 }
@@ -365,6 +433,9 @@ fn print_layouts(config: &Config) {
     println!("Layouts ({}):", config.layouts.len());
     for layout in &config.layouts {
         println!("  {}", layout.id);
+        if !layout.env.is_empty() {
+            println!("    {}", describe_env(&layout.env));
+        }
         if let Some(setup) = &layout.setup {
             println!(
                 "    setup: {}{}",

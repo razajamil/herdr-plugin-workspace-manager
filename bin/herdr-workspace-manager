@@ -20,6 +20,14 @@ done
 root=$(cd "$(dirname "$self")/.." && pwd)
 bin="$root/target/release/herdr-workspace-manager"
 
+# Hot path: workspace.focused fires on every workspace switch, and the binary
+# almost always decides in a single stat that there's nothing to do. Skip the
+# rebuild check (which walks src/ with find) so that decision isn't preceded by
+# a filesystem sweep. Any other entrypoint still picks up a rebuilt source tree.
+if [ "${HERDR_PLUGIN_EVENT:-}" = "workspace.focused" ] && [ -x "$bin" ]; then
+  exec "$bin" "$@"
+fi
+
 needs_build() {
   [ ! -x "$bin" ] && return 0
   # Rebuild when the source is newer than the binary (e.g. after `git pull`).

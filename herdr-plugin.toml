@@ -9,6 +9,12 @@ platforms = ["linux", "macos"]
 # compiles the Rust binary on first use (cargo build --release) and execs it.
 # After that one-off build there is no runtime dependency at all.
 
+# One-shot state maintenance after the server restores its session (and after a
+# live handoff): drops claims for worktrees that no longer exist and clears the
+# per-session focus cache. This used to run on every event invocation.
+[[startup]]
+command = ["sh", "bin/herdr-workspace-manager", "startup"]
+
 # Fires for every new worktree. The handler matches the new worktree's checkout
 # path against the configured workspaces and, if a default layout is set, applies
 # it (creates the tabs/panes and runs their commands).
@@ -16,11 +22,17 @@ platforms = ["linux", "macos"]
 on = "worktree.created"
 command = ["sh", "bin/herdr-workspace-manager", "event"]
 
-# The herdr UI "new worktree" command creates the worktree in-app and emits
-# NEITHER worktree.created nor workspace.created to plugins — the only event it
-# dispatches is workspace.focused (it focuses the new worktree on creation). So
-# we also listen for workspace.created (CLI path) and workspace.focused (UI
-# path). The hook dedupes, so the extra events are harmless.
+# The herdr UI "new worktree" command has historically created the worktree
+# in-app and emitted NEITHER worktree.created nor workspace.created to plugins —
+# the only event it dispatches is workspace.focused (it focuses the new worktree
+# on creation). So we also listen for workspace.created (CLI path) and
+# workspace.focused (UI path). The hook dedupes, so the extra events are
+# harmless.
+#
+# workspace.focused fires on every workspace switch, so its early-exit path is
+# kept to a single stat. If your herdr build does deliver worktree.created for
+# UI-created worktrees, set HERDR_WSM_FOCUS_HOOK=0 to skip it entirely — see
+# "Is the workspace.focused hook still needed?" in the README.
 [[events]]
 on = "workspace.created"
 command = ["sh", "bin/herdr-workspace-manager", "event"]

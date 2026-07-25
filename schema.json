@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/razajamil/herdr-plugin-workspace-manager/main/schema.json",
   "title": "herdr-plugin-workspace-manager config",
-  "description": "Declarative herdr tab/pane layouts with per-workspace defaults. Keep in sync with src/config.mjs.",
+  "description": "Declarative herdr tab/pane layouts with per-workspace defaults. Keep in sync with src/config.rs.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -29,13 +29,22 @@
           "description": "Unique layout id, referenced by workspaces[].defaultLayout."
         },
         "setup": { "$ref": "#/$defs/setup" },
+        "env": {
+          "$ref": "#/$defs/env",
+          "description": "Environment variables applied to every pane in this layout. A pane's own `env` wins on conflict."
+        },
         "tabs": {
           "type": "array",
           "minItems": 1,
-          "description": "Tabs, walked in order. The first tab reuses the worktree's existing tab.",
+          "description": "Tabs, walked in order. The first tab replaces the worktree's existing tab.",
           "items": { "$ref": "#/$defs/tab" }
         }
       }
+    },
+    "env": {
+      "type": "object",
+      "description": "Environment variables for the pane process. Values are stringified, so `PORT: 3000` needs no quotes.",
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
     },
     "setup": {
       "type": "object",
@@ -76,9 +85,61 @@
         "required": ["ratio", "size"],
         "$comment": "ratio and size are mutually exclusive."
       },
+      "dependentRequired": {
+        "agentName": ["agent"],
+        "agentArgs": ["agent"],
+        "prompt": ["agent"],
+        "agentTimeoutMs": ["agent"],
+        "promptTimeoutMs": ["agent"],
+        "persist": ["command"]
+      },
       "properties": {
         "title": { "type": "string", "description": "Pane label." },
-        "command": { "type": "string", "description": "Optional command to run in the pane." },
+        "command": {
+          "type": "string",
+          "description": "Optional command to run in the pane. It runs in your own interactive login shell, so shell rc setup (mise/asdf/nvm, aliases, PATH) applies. Mutually exclusive with `agent`."
+        },
+        "persist": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the pane at a shell prompt after `command` exits. Set false to let the pane close with the command. Requires `command`."
+        },
+        "env": {
+          "$ref": "#/$defs/env",
+          "description": "Environment variables for this pane, merged over the layout's `env`."
+        },
+        "agent": {
+          "description": "Start a recognized coding agent in this pane with `herdr agent start`, which returns only once herdr detects the agent is ready for input. Mutually exclusive with `command`.",
+          "enum": [
+            "pi", "claude", "codex", "gemini", "cursor", "devin", "agy", "cline", "omp",
+            "mastracode", "opencode", "copilot", "kimi", "kiro", "droid", "amp", "grok",
+            "hermes", "kilo", "qodercli", "maki"
+          ]
+        },
+        "agentName": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "description": "Stable alias for the agent, usable with `herdr agent ...` afterwards. Must be unique among live agents. Defaults to a name derived from the kind and workspace."
+        },
+        "agentArgs": {
+          "type": "array",
+          "items": { "type": ["string", "number", "boolean"] },
+          "description": "Arguments passed through to the agent's own executable (after `--`)."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Prompt submitted to the agent once it is ready. Submitted and left running unless `promptTimeoutMs` is set."
+        },
+        "agentTimeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "How long to wait for the agent to become ready. herdr requires >3000 and <=300000."
+        },
+        "promptTimeoutMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Setting this makes the apply wait for the agent to settle (idle or done) after `prompt`, up to this long. Omit to submit the prompt and move on."
+        },
         "setup": {
           "type": "boolean",
           "default": false,
@@ -95,7 +156,7 @@
           "description": "Legacy split ratio between 0 and 1: the fraction of the split the PREVIOUS pane keeps (this pane gets the rest). Prefer `size`, which sizes this pane directly. Mutually exclusive with `size`."
         },
         "size": {
-          "description": "Size of THIS pane along the split axis (columns for a vertical/right split, rows for a horizontal/down split). A whole number is fixed cells (e.g. 40); a number between 0 and 1 is a fraction (0.3 = 30%); a string like \"30%\" is a percentage. Fixed cell sizes are converted to a ratio from the pane's live size at creation. Mutually exclusive with `ratio`.",
+          "description": "Size of THIS pane along the split axis (columns for a vertical/right split, rows for a horizontal/down split). A whole number is fixed cells (e.g. 40); a number between 0 and 1 is a fraction (0.3 = 30%); a string like \"30%\" is a percentage. Fixed cell sizes are converted to a ratio against the tab's cell area. Mutually exclusive with `ratio`.",
           "anyOf": [
             { "type": "number", "exclusiveMinimum": 0 },
             { "type": "string", "pattern": "^\\s*\\d+(\\.\\d+)?\\s*%\\s*$" }

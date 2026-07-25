@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 use crate::config::{resolve_path, Layout};
 use crate::env::Env;
 use crate::herdr::run_herdr_json;
-use crate::plan::build_plan;
-use crate::runner::{execute_plan, Logger, Target};
+use crate::plan::{build_plan, PlanContext};
+use crate::runner::{execute_plan, setup_status_path, Logger, Target};
 
 fn try_json(text: Option<&str>) -> Option<Value> {
     serde_json::from_str(text?).ok()
@@ -142,7 +142,7 @@ pub fn get_worktree_branch(
 // workspace.created can also fire on restore. These guards ensure a layout is
 // applied exactly once per worktree, only when the workspace is brand new.
 
-fn state_dir(env: &Env) -> PathBuf {
+pub fn state_dir(env: &Env) -> PathBuf {
     match env.get("HERDR_PLUGIN_STATE_DIR").filter(|v| !v.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => std::env::temp_dir().join("herdr-wsc-state"),
@@ -168,6 +168,18 @@ pub fn is_decided(env: &Env, workspace_id: &str) -> bool {
 pub fn mark_decided(env: &Env, workspace_id: &str) {
     let _ = fs::create_dir_all(state_dir(env).join("decided"));
     let _ = fs::create_dir(decided_path(env, workspace_id)); // already marked -> fine
+}
+
+/// Forget every "already decided" workspace. Run once at server startup: the
+/// cache only exists to make repeat focus events cheap within a session, and
+/// dropping it means a worktree created while no server was running is still
+/// considered on its first focus.
+pub fn clear_decided(env: &Env) -> usize {
+    let dir = state_dir(env).join("decided");
+    let Ok(entries) = fs::read_dir(&dir) else { return 0 };
+    let count = entries.flatten().count();
+    let _ = fs::remove_dir_all(&dir);
+    count
 }
 
 fn applied_dir(env: &Env) -> PathBuf {
@@ -403,8 +415,50 @@ pub fn resolve_target(
     })
 }
 
+// The tab's usable size in cells, used to convert a fixed `size:` in cells into
+// a split ratio. One query for the whole layout: every nested region is then
+// arithmetic, where the old imperative runner had to re-measure after each
+// split. None just means cell sizes fall back to an even split.
+fn tab_area(env: &Env, pane_id: &str) -> Option<(f64, f64)> {
+    let layout = run_herdr_json(&["pane", "layout", "--pane", pane_id], env).ok()?;
+    let area = layout.get("layout")?.get("area")?;
+    let width = area.get("width")?.as_f64()?;
+    let height = area.get("height")?.as_f64()?;
+    (width > 0.0 && height > 0.0).then_some((width, height))
+}
+
+// A short unique token for per-run temporary files.
+pub fn run_token() -> String {
+    fn base36(mut n: u128) -> String {
+        const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+        if n == 0 {
+            return "0".to_string();
+        }
+        let mut out = Vec::new();
+        while n > 0 {
+            out.push(DIGITS[(n % 36) as usize]);
+            n /= 36;
+        }
+        out.reverse();
+        String::from_utf8(out).unwrap()
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{}{}", base36(std::process::id() as u128), base36(now_ms))
+}
+
 pub fn apply_layout(env: &Env, layout: &Layout, target: &Target, log: Logger) -> Result<Value, String> {
-    let plan = build_plan(layout, target.cwd.as_deref());
+    let ctx = PlanContext {
+        cwd: target.cwd.clone(),
+        area: tab_area(env, &target.root_pane),
+        setup_status_path: layout
+            .setup
+            .as_ref()
+            .and_then(|_| setup_status_path(&state_dir(env), &run_token())),
+    };
+    let plan = build_plan(layout, &ctx);
     execute_plan(&plan, target, env, log)
 }
 

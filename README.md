@@ -19,11 +19,14 @@ and the merged ones clean up in one command.
 herdr-plugin-workspace-manager is a [herdr](https://herdr.dev) plugin that arranges
 every new worktree into a declarative layout — and cleans up the ones you're done with:
 
-- **Declarative layouts.** Tabs, panes, splits, and per-pane startup commands,
-  defined once in YAML.
+- **Declarative layouts.** Tabs, panes, splits, environment, and per-pane
+  startup commands, defined once in YAML.
 - **Applied automatically, per repo.** Point a repo at a layout and every new
   worktree — created from the CLI _or_ the herdr TUI — opens straight into it,
   fully arranged. No rebuilding your working view by hand each time.
+- **Agents that are actually running.** Declare `agent: claude` and the plugin
+  waits until herdr reports it ready for input — optionally handing it the task
+  as a `prompt`.
 - **Picked by branch.** Route `fix/*` branches to a trimmed layout and `docs/*`
   to another; the first matching rule wins.
 - **Zero dependencies except Rust.** No Node, no npm — the plugin is a single
@@ -34,10 +37,10 @@ every new worktree into a declarative layout — and cleans up the ones you're d
 
 ## Install
 
-Requires **herdr ≥ 0.7.0** and a **Rust toolchain** (`cargo`, [rustup.rs](https://rustup.rs))
-on your `PATH`. The plugin compiles itself on first use — a one-off
-`cargo build --release` — and runs as a single native binary from then on, with
-no runtime dependencies at all.
+Requires **herdr ≥ 0.7.5**, **Linux or macOS**, and a **Rust toolchain**
+(`cargo`, [rustup.rs](https://rustup.rs)) on your `PATH`. The plugin compiles
+itself on first use — a one-off `cargo build --release` — and runs as a single
+native binary from then on, with no runtime dependencies at all.
 
 ```sh
 herdr plugin install razajamil/herdr-plugin-workspace-manager
@@ -77,15 +80,17 @@ layouts:
       - title: code
         panes:
           - title: agent
-            command: claude    # optional command to run in the pane
-            setup: true        # runs setup.command first, then `claude`
+            agent: claude      # started with `herdr agent start`, waits until it's ready
+            setup: true        # runs setup.command first, then starts the agent
           - title: editor
-            command: nvim
+            command: nvim      # optional command to run in the pane
             split: vertical    # placed beside the agent pane
       - title: server
         panes:
           - title: dev
             command: make dev
+            env:
+              PORT: 3000       # environment for this pane's process
           - title: shell
             split: horizontal  # stacked below the dev server
       - title: git
@@ -169,6 +174,12 @@ Layouts work without the CLI — it's only needed for cleanup.
 - **No runtime dependencies.** A single native Rust binary (including a small
   YAML-subset parser); the shim entrypoint builds it on first use, so a
   `herdr plugin link`-ed clone works with nothing but a Rust toolchain.
+- **One request per tab.** Each tab is built from a declarative tree in a single
+  `layout.apply` call — structure, labels, cwd, env and commands together —
+  instead of a round-trip per split, rename and command.
+- **Real agents, not typed commands.** `agent: claude` starts a recognized agent
+  with `herdr agent start`, which returns only once herdr has *detected* it and
+  marked it ready for input. Add a `prompt:` to hand it the task.
 - **CLI and TUI worktrees both covered.** herdr emits different events for the
   two creation paths; the plugin subscribes to all of them and dedupes with an
   atomic claim, so a layout is applied exactly once per worktree.
@@ -182,8 +193,11 @@ Layouts work without the CLI — it's only needed for cleanup.
   completion, hover docs, and validation in any YAML-language-server editor.
 - **On demand too.** `apply` and `validate` plugin actions (plus a
   `prefix+shift+l` keybinding) apply a layout or check your config any time.
-- **Just the herdr CLI under the hood.** The result is ordinary tabs and panes,
-  built exactly as if by hand — nothing proprietary to unwind.
+- **Failures are visible.** A slow or failing setup shows on the pane's sidebar
+  row, and failures raise a herdr notification instead of only reaching the
+  plugin log.
+- **Just herdr's own APIs under the hood.** The result is ordinary tabs and
+  panes — nothing proprietary to unwind.
 
 ---
 
@@ -201,10 +215,19 @@ lives in [`config.example.yml`](./config.example.yml).
 | --- | --- | --- |
 | `layouts[].id` | layout | Unique id, referenced by `defaultLayout`. |
 | `layouts[].setup.command` | layout | Optional command run on the `setup: true` pane. |
-| `layouts[].setup.blocking` | layout | If `true`, no further tabs/panes spawn until setup finishes. |
-| `tabs[].title` | tab | Tab label. The first tab reuses the worktree's existing tab. |
+| `layouts[].setup.blocking` | layout | If `true`, no further tabs spawn until setup finishes. |
+| `layouts[].env` | layout | Environment variables for every pane in the layout. |
+| `tabs[].title` | tab | Tab label. The first tab replaces the worktree's existing tab. |
 | `panes[].title` | pane | Pane label. |
-| `panes[].command` | pane | Optional command to run in the pane. |
+| `panes[].command` | pane | Optional command to run in the pane, in your interactive login shell. Mutually exclusive with `agent`. |
+| `panes[].persist` | pane | Default `true` — stay at a shell prompt after `command` exits. `false` lets the pane close with it. |
+| `panes[].env` | pane | Environment variables for this pane, merged over `layouts[].env`. |
+| `panes[].agent` | pane | Start a recognized coding agent here (`claude`, `codex`, `opencode`, …). See [Agent panes](#agent-panes). |
+| `panes[].agentName` | pane | Stable alias for that agent (`[a-z][a-z0-9_-]`, unique among live agents). Defaults to one derived from the kind + workspace. |
+| `panes[].agentArgs` | pane | Arguments passed through to the agent's own executable. |
+| `panes[].prompt` | pane | Prompt submitted once the agent is ready. |
+| `panes[].agentTimeoutMs` | pane | How long to wait for the agent to become ready (herdr allows >3000, ≤300000). |
+| `panes[].promptTimeoutMs` | pane | Setting it makes the apply wait for the agent to settle after `prompt`. Omit to submit and move on. |
 | `panes[].setup` | pane | Marks the single pane that runs `setup.command` (at most one per layout). |
 | `panes[].split` | pane | For panes after the first: `vertical` \| `horizontal` \| `right` \| `down`. |
 | `panes[].size` | pane | Optional size of **this** pane along the split axis: fixed cells (`40`), a fraction (`0.3`), or a percentage (`"30%"`). See [Pane sizing](#pane-sizing). |
@@ -261,24 +284,109 @@ panes:
     size: "25%"     # bottom terminal takes 25% of the height
 ```
 
-A percentage/fraction is applied directly. A **fixed** cell size is converted
-to a ratio from the pane's *live* size at creation time — so it lands on ~N
-cells when the layout is built; if you later resize the window, herdr
-rebalances the panes proportionally (the plugin doesn't manage them
-afterwards). A fixed size larger than the available space is clamped so both
-panes stay visible.
+A percentage/fraction is applied directly. A **fixed** cell size is converted to
+a ratio against the tab's cell area, which the plugin queries once per apply —
+so it lands on ~N cells when the layout is built; if you later resize the
+window, herdr rebalances the panes proportionally (the plugin doesn't manage
+them afterwards). A fixed size larger than the available space is clamped so
+both panes stay visible.
 
 `size` refers to the pane you put it on. The older `ratio` field is the
 opposite — it's herdr's raw ratio, the fraction the **previous** pane keeps —
 so `ratio: 0.3` makes the previous pane 30% and *this* pane 70%. `ratio` still
 works but a pane can't set both; prefer `size`.
 
+### Commands and the shell
+
+A pane's `command` runs inside **your own interactive login shell**, so
+everything your `.zshrc` / `.bash_profile` sets up — `mise`/`asdf`/`nvm` shims,
+aliases, `PATH` edits — applies exactly as it would if you'd typed the command
+into the pane yourself. When the command exits you're left at a prompt; set
+`persist: false` when a pane should close with its command instead:
+
+```yaml
+panes:
+  - title: dev
+    command: npm run dev      # exits -> you're back at a prompt
+  - title: lazygit
+    command: lazygit
+    persist: false            # exits -> the pane closes
+```
+
+Unlike earlier versions, the command is not typed into the pane, so it doesn't
+appear in scrollback and there's no keystroke race on a freshly created pane.
+The prompt you're handed back to is interactive but not a *login* shell — it
+inherits the environment the login shell already exported, so login-only profile
+side effects (starting an ssh-agent, printing a MOTD) don't run twice per pane.
+
+### Environment variables in a layout
+
+`env` blocks attach environment variables to the pane's process. Put shared
+values on the layout and per-pane overrides on the pane; pane entries win.
+Values are stringified, so numbers and booleans need no quoting:
+
+```yaml
+layouts:
+  - id: web-app
+    env:
+      NODE_ENV: development
+    tabs:
+      - title: server
+        panes:
+          - title: dev
+            command: npm run dev
+            env:
+              PORT: 3000
+```
+
+### Agent panes
+
+Instead of a `command`, a pane can declare an `agent`. The plugin starts it with
+`herdr agent start`, which returns only once herdr has **detected** the agent in
+that pane and marked it ready for interactive input — so a layout knows the
+agent actually came up rather than assuming it did:
+
+```yaml
+panes:
+  - title: agent
+    agent: claude
+    agentName: web-main                 # optional stable alias
+    agentArgs:                          # optional, passed to the agent itself
+      - --permission-mode
+      - plan
+    prompt: Read TASK.md and start.     # optional, submitted once it's ready
+```
+
+Supported kinds are the ones `herdr agent start --kind` accepts: `pi`, `claude`,
+`codex`, `gemini`, `cursor`, `devin`, `agy`, `cline`, `omp`, `mastracode`,
+`opencode`, `copilot`, `kimi`, `kiro`, `droid`, `amp`, `grok`, `hermes`, `kilo`,
+`qodercli`, `maki`. An unknown kind is rejected by `validate`, not halfway
+through building the layout.
+
+`agentName` gives the agent a stable alias you can use afterwards
+(`herdr agent prompt web-main "…"`). Names must be unique among **live** agents,
+so reusing one across two worktrees open at once will fail; leave it out and the
+plugin derives a unique name from the kind and workspace.
+
+A `prompt` is submitted and left running. Add `promptTimeoutMs` when you want
+the apply to wait for the agent to settle (idle or done) before finishing.
+
+If an agent fails to start, the layout it was part of stays built — the plugin
+warns, raises a notification, and carries on with the remaining panes.
+
 ### Setup pane
 
 At most one pane per layout may set `setup: true`. The setup command runs there
-first; with `blocking: true` the hook waits for it to finish before building
-anything else. After setup, that pane still runs its own `command`. Put the
-setup pane first so nothing spawns ahead of it.
+first; with `blocking: true` the plugin waits for it to finish before building
+any later tab. After setup, that pane still runs its own `command` (or starts
+its `agent` — an agent on the setup pane always waits for setup, blocking or
+not). Put the setup pane first so nothing spawns ahead of it.
+
+While a blocking setup runs, the pane's sidebar row carries a `setup` token
+(`running`, then `failed-<code>` or `timed-out` if it doesn't succeed), and a
+failure also raises a herdr notification. The exit status is captured by the
+setup script itself rather than scraped from terminal output, so it can't be
+missed because the marker scrolled away.
 
 ### Editor autocomplete
 
@@ -311,6 +419,16 @@ herdr plugin action invoke validate --plugin herdr-plugin-workspace-manager
 ```
 
 A keybinding (`prefix+shift+l` → apply) is declared in the manifest.
+
+> **`apply` rebuilds the first tab.** The layout's first tab *replaces* the
+> workspace's existing first tab (herdr creates the replacement, then closes the
+> old one), so running `apply` by hand against a workspace with work in that tab
+> will take its panes and their processes with it. On a fresh worktree — the
+> automatic path — that tab is empty, so nothing is lost. Later tabs are
+> appended, not replaced.
+
+A `[[startup]]` hook also runs once per herdr server start; it does state
+maintenance only and never builds a layout.
 
 ## The `remove-gone` CLI
 
@@ -377,9 +495,32 @@ herdr plugin action invoke remove-gone --plugin herdr-plugin-workspace-manager  
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `HERDR_WSM_CONFIG` | — | Absolute path to a config file (overrides the default lookup). |
-| `HERDR_WSM_PANE_READY_MS` | `700` | Delay before sending the first command to a freshly spawned pane (its shell needs a moment, or early keystrokes are dropped). |
-| `HERDR_WSM_SETUP_TIMEOUT_MS` | `600000` | Max wait for a blocking setup command to finish. |
+| `HERDR_WSM_SETUP_TIMEOUT_MS` | `600000` | Max wait for a blocking setup command to finish. Exceeding it warns; it doesn't fail the layout. |
+| `HERDR_WSM_APPLY_TIMEOUT_MS` | `60000` | Max wait for a single `layout.apply` request (one per tab). |
+| `HERDR_WSM_AGENT_TIMEOUT_MS` | `60000` | Default wait for an agent to become ready; `agentTimeoutMs` overrides per pane. |
+| `HERDR_WSM_SHELL_READY_MS` | `15000` | Max wait for a pane to be back at its shell prompt before starting an agent in it. |
+| `HERDR_WSM_FOCUS_HOOK` | — | Set to `0` to disable the `workspace.focused` trigger entirely. See [below](#is-the-workspacefocused-hook-still-needed). |
 | `HERDR_WSM_NO_FETCH` | — | If set, `remove-gone` skips the `git fetch --prune` and uses cached remote-tracking refs. |
+
+`apply` normally targets the workspace you invoke it from. These override that,
+which is useful for scripting it against a specific workspace:
+
+| Var | Falls back to | Purpose |
+| --- | --- | --- |
+| `HERDR_WSM_WORKSPACE` | `HERDR_WORKSPACE_ID`, then the invocation context | Workspace to build into. |
+| `HERDR_WSM_TAB` | `HERDR_TAB_ID`, then the workspace's first tab | Tab to replace with the layout's first tab. |
+| `HERDR_WSM_PANE` | `HERDR_PANE_ID`, then that tab's first pane | Root pane, used to measure the tab area. |
+| `HERDR_WSM_CWD` | the workspace's checkout path | Working directory for the layout's panes. |
+| `HERDR_WSM_LAYOUT` | the workspace's default layout | Layout id to apply. An `apply <id>` argument wins over it. |
+
+```sh
+# Build the `web-app` layout into a specific workspace:
+HERDR_WSM_WORKSPACE=w7 herdr-workspace-manager apply web-app
+```
+
+`HERDR_WSM_PANE_READY_MS` is gone. It existed to delay typing into a pane whose
+shell might not be listening yet; commands are now launched as the pane's
+process, and agents wait for an observed shell prompt instead of a fixed guess.
 
 ## How it works
 
@@ -404,16 +545,7 @@ So the hook listens for `worktree.created`, `workspace.created`, **and**
 5. Only builds into a **fresh** (1-tab/1-pane) workspace.
 6. **Dedupes** with an atomic claim (the events can fire together; also skips
    restored worktrees after a restart) — applied exactly once per worktree.
-7. Walks the chosen layout **depth-first**, driving the herdr CLI to build it —
-   exactly as if you'd done it by hand.
-
-> **Note on `workspace.focused`.** It fires on every workspace switch, so the
-> hook runs a tiny check each time (a "decided" cache makes repeat focuses a
-> no-op). A side effect: focusing a *fresh, empty* worktree of a configured repo
-> applies its layout (once) — which is exactly how the TUI flow works, since the
-> TUI focuses the new worktree on creation. To turn off the focus trigger, remove
-> the `[[events]] on = "workspace.focused"` block from the manifest; `herdr
-> worktree create` still works via the other two events.
+7. Builds each tab with **one** `layout.apply` request, then starts any agents.
 
 ```
  new worktree (CLI or TUI) ──► event hook (herdr-workspace-manager event)
@@ -421,16 +553,45 @@ So the hook listens for `worktree.created`, `workspace.created`, **and**
    load config ─► match workspaces[] (repo or path) ─► default layout
         │                                                   │
         └── no match / not fresh / already done ─► no-op     ▼
-                                          depth-first walk → herdr tab/pane CLI:
-                                            tab 0  → reuse the worktree's root tab + pane
-                                            tab N  → herdr tab create
-                                            pane J → herdr pane split <prev pane>
-                                            each pane → rename + run command
-                                            setup pane → run setup (blocking? wait) then its command
+                                      per tab: one layout.apply request
+                                        tab 0  → replaces the worktree's root tab
+                                        tab N  → appended to the workspace
+                                        tree   → splits, labels, cwd, env, commands
+                                        setup pane → runs setup first (blocking? wait)
+                                      then, per agent pane:
+                                        herdr agent start ─► optional prompt
 ```
 
-Because it's just the herdr CLI under the hood, the result is a set of ordinary
-panes — the plugin doesn't manage their lifecycle afterwards.
+A `[[startup]]` hook runs once after the server restores its session: it drops
+claims whose worktree no longer exists and clears the per-session focus cache.
+
+Because it's herdr's own layout and agent APIs under the hood, the result is a
+set of ordinary panes — the plugin doesn't manage their lifecycle afterwards.
+
+### Is the `workspace.focused` hook still needed?
+
+`workspace.focused` fires on **every** workspace switch, making it by far the
+most frequent reason this plugin runs. It's subscribed to only because herdr's
+TUI worktree creation has historically not delivered `worktree.created` to
+plugins. Its early-exit path is therefore kept to a single `stat` — no config
+parse, no herdr query, and the shim skips its rebuild check for this event.
+
+If your herdr build *does* deliver `worktree.created` for TUI-created worktrees,
+you can drop the trigger entirely. To check:
+
+```sh
+# Create a worktree from the TUI (right-click a space -> new worktree), then:
+herdr plugin log list --plugin herdr-plugin-workspace-manager
+```
+
+If the log shows a `worktree.created` or `workspace.created` entry for that
+creation, the focus hook is redundant — set `HERDR_WSM_FOCUS_HOOK=0` in herdr's
+environment, or remove the `[[events]] on = "workspace.focused"` block from the
+manifest.
+
+Keeping it on is harmless. One side effect worth knowing: focusing a *fresh,
+empty* worktree of a configured repo applies its layout (once) — which is
+exactly what the TUI flow relies on.
 
 ## Trust & security
 
@@ -441,12 +602,23 @@ and `config.yml` before use — you control exactly what runs.
 
 ## Notes & limitations
 
-- The first tab/pane of a layout reuses the worktree's existing root tab/pane;
-  additional tabs/panes are created.
-- Layouts are applied additively; the plugin does not tear panes down.
+- The first tab of a layout **replaces** the worktree's existing root tab (herdr
+  creates the replacement first, then closes the old one); later tabs are
+  appended. On a brand-new worktree that root tab is empty, so nothing is lost —
+  but running `apply` by hand against a workspace with work in its first tab
+  will replace that tab and the processes in it.
+- Layouts are applied additively beyond the first tab; the plugin does not tear
+  panes down.
+- Requires herdr **0.7.5+** and Unix (Linux/macOS). `layout.apply` has no CLI
+  wrapper, so the plugin speaks herdr's socket API directly for that one call;
+  on Windows the same API lives behind a named pipe, which this plugin doesn't
+  implement.
 - A single Rust binary with no runtime dependencies (includes a small
   YAML-subset parser). The `bin/herdr-workspace-manager` shim compiles it on
   first use, so it works under `herdr plugin link` with just a Rust toolchain.
+- Plugin installs and links are **global to your user** as of herdr 0.7.5 (they
+  used to be per-session). If you linked this plugin inside a named session on
+  0.7.3, link it again once.
 
 ## Development
 
@@ -454,13 +626,17 @@ and `config.yml` before use — you control exactly what runs.
 cargo test                                    # unit tests + integration test
 cargo test --bin herdr-workspace-manager      # unit tests only (no herdr needed)
 cargo test --test integration                 # live: creates a real herdr worktree and drives the hook end-to-end
+
+# Opt in to the live agent check (starts a real agent in a throwaway workspace):
+HERDR_WSM_ITEST_AGENT=claude cargo test --test integration
 ```
 
 The integration test auto-skips when no herdr server is running; otherwise it
 creates a throwaway git repo + a real linked worktree, drives the real
-`workspace.focused` hook, and asserts the tab/pane structure, that each pane
-command actually ran (via marker files), blocking-setup ordering, and
-idempotency — then cleans everything up.
+`workspace.focused` hook, and asserts the tab/pane structure, pane labels, env
+injection, that each pane command actually ran (via marker files),
+blocking-setup ordering, and idempotency — then cleans everything up. The agent
+test is opt-in because it needs the agent's own binary installed.
 
 This repo is a self-contained herdr plugin (a `herdr-plugin.toml` manifest plus
 a Rust crate). To list it in the herdr marketplace, the GitHub repo carries the

@@ -60,27 +60,3 @@ pub fn run_herdr_json(args: &[&str], env: &Env) -> Result<Value, String> {
     }
     Ok(parsed.map(|p| p.get("result").cloned().unwrap_or(Value::Null)).unwrap_or(Value::Null))
 }
-
-// Extract a pane id from any herdr result shape we care about
-// (pane split -> result.pane.pane_id, tab create -> result.root_pane.pane_id).
-pub fn pane_id_of(result: &Value) -> Option<String> {
-    for candidate in [
-        result.get("pane_id"),
-        result.get("pane").and_then(|p| p.get("pane_id")),
-        result.get("root_pane").and_then(|p| p.get("pane_id")),
-    ] {
-        if let Some(Value::String(id)) = candidate {
-            return Some(id.clone());
-        }
-    }
-    None
-}
-
-pub fn tab_id_of(result: &Value) -> Option<String> {
-    for candidate in [result.get("tab_id"), result.get("tab").and_then(|t| t.get("tab_id"))] {
-        if let Some(Value::String(id)) = candidate {
-            return Some(id.clone());
-        }
-    }
-    None
-}

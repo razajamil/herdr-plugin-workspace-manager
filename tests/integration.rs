@@ -7,8 +7,8 @@
 //   - creates a throwaway git repo + a real `herdr worktree create`
 //   - drives the `event` subcommand with a synthetic workspace.focused payload
 //     + a temp config/state dir, so the hook must query the workspace for facts
-//   - asserts tab/pane structure, command execution (marker FILES), blocking
-//     setup ordering, idempotency (a second event is a no-op)
+//   - asserts tab/pane structure, labels, env injection, command execution
+//     (marker FILES), blocking setup ordering, idempotency
 //   - removes the worktree, closes the source workspace, deletes temp dirs
 //
 // Skips automatically when no herdr server is running.
@@ -93,6 +93,13 @@ fn mtime(p: &Path) -> SystemTime {
     fs::metadata(p).unwrap().modified().unwrap()
 }
 
+fn tmp_dir(prefix: &str) -> PathBuf {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), base36(now)));
+    fs::create_dir_all(&dir).unwrap();
+    dir.canonicalize().unwrap()
+}
+
 // Cleanup that also runs when an assertion panics mid-test.
 struct Cleanup {
     workspace_id: Option<String>,
@@ -126,11 +133,7 @@ fn applies_a_layout_to_a_real_worktree_via_a_workspace_focused_event() {
         return;
     }
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-    let tmp_root =
-        std::env::temp_dir().join(format!("wsc-itest-{}-{}", std::process::id(), base36(now)));
-    fs::create_dir_all(&tmp_root).unwrap();
-    let tmp_root = tmp_root.canonicalize().unwrap();
+    let tmp_root = tmp_dir("wsc-itest");
     let repo_name = format!("wsc-it-{}", tmp_root.file_name().unwrap().to_string_lossy());
     let repo = tmp_root.join(&repo_name);
     let markers = tmp_root.join("markers");
@@ -164,7 +167,6 @@ fn applies_a_layout_to_a_real_worktree_via_a_workspace_focused_event() {
     );
 
     let m = |name: &str| markers.join(name);
-    let token = format!("TOK{}", base36(now));
     // Match by repo root; structure mirrors a real layout but with cheap marker
     // commands. setup sleeps 1s so the blocking-ordering check is observable.
     //
@@ -178,6 +180,9 @@ fn applies_a_layout_to_a_real_worktree_via_a_workspace_focused_event() {
             r#"
 layouts:
   - id: itest
+    env:
+      WSM_LAYOUT_ENV: layout-value
+      WSM_OVERRIDE: from-layout
     setup:
       command: sleep 1; echo done > {setup_done}
       blocking: true
@@ -186,11 +191,14 @@ layouts:
         panes:
           - title: a0
             setup: true
-            command: echo a0 > {a0}; printf 'A0OUT_%s\n' '{token}'
+            command: echo a0 > {a0}
           - title: a1
             split: vertical
             size: 10
-            command: echo a1 > {a1}
+            env:
+              WSM_PANE_ENV: pane-value
+              WSM_OVERRIDE: from-pane
+            command: echo "$WSM_LAYOUT_ENV/$WSM_PANE_ENV/$WSM_OVERRIDE" > {a1}
       - title: beta
         panes:
           - title: b0
@@ -216,7 +224,6 @@ workspaces:
             a1 = m("a1.cmd").display(),
             b0 = m("b0.cmd").display(),
             b1 = m("b1.cmd").display(),
-            token = token,
             repo = repo.display(),
         ),
     )
@@ -279,6 +286,8 @@ workspaces:
     // The branch-matched layout won over the decoy defaultLayout -> the hook
     // resolved the worktree's branch (`itest`) from the live server.
     assert_eq!(summary["layoutId"], "itest");
+    // One layout.apply per tab, each reporting the tab it built.
+    assert_eq!(summary["tabs"].as_array().unwrap().len(), 2);
 
     // 3. Structure: two tabs (alpha, beta), 2 panes each.
     let tabs = herdr(&["tab", "list", "--workspace", &workspace_id]);
@@ -290,14 +299,20 @@ workspaces:
     let pane_list = panes["panes"].as_array().unwrap();
     assert_eq!(pane_list.len(), 4, "expected 4 panes total");
     for tab in tabs["tabs"].as_array().unwrap() {
-        let count =
-            pane_list.iter().filter(|p| p["tab_id"] == tab["tab_id"]).count();
+        let count = pane_list.iter().filter(|p| p["tab_id"] == tab["tab_id"]).count();
         assert_eq!(count, 2, "tab {} should have 2 panes", tab["label"]);
     }
 
+    // 3a. Pane labels came from the same layout.apply request that created the
+    //     panes -- there is no separate rename round-trip any more.
+    let mut pane_labels: Vec<&str> =
+        pane_list.iter().filter_map(|p| p["label"].as_str()).collect();
+    pane_labels.sort();
+    assert_eq!(pane_labels, vec!["a0", "a1", "b0", "b1"]);
+
     // 3b. Sizing: a1 asked for a fixed 10-column width, so it must end up
     //     narrower than its sibling a0 (which keeps the rest). This exercises
-    //     the live cells->ratio conversion (pane_extent) end-to-end.
+    //     the cells->ratio conversion against the queried tab area.
     let t0p0 = summary["handles"]["t0p0"].as_str().unwrap();
     let t0p1 = summary["handles"]["t0p1"].as_str().unwrap();
     let alpha = herdr(&["pane", "layout", "--pane", t0p0]);
@@ -334,10 +349,11 @@ workspaces:
         "duplicate event must not add panes"
     );
 
-    // 5. Command execution: each pane command wrote its marker file.
+    // 5. Command execution: each pane command wrote its marker file. Commands
+    //    now launch as the pane's process rather than being typed into a shell.
     let files: Vec<PathBuf> =
         ["setup.done", "a0.cmd", "a1.cmd", "b0.cmd", "b1.cmd"].iter().map(|f| m(f)).collect();
-    wait_for_files(&files, Duration::from_secs(20));
+    wait_for_files(&files, Duration::from_secs(30));
 
     // 6. Blocking setup finished (1s sleep) before the later panes were built.
     assert!(
@@ -345,17 +361,136 @@ workspaces:
         "blocking setup should complete before later panes"
     );
 
-    // 7. Terminal-level proof: the setup pane's command produced output
-    //    (A0OUT_<token> via printf %s — present in output, not the echoed input).
-    let marker = format!("A0OUT_{}", token);
-    let w = Command::new(herdr_bin())
-        .args(["pane", "wait-output", t0p0, "--match", &marker, "--timeout", "10000"])
-        .output()
-        .expect("spawn herdr pane wait-output");
-    let w_stdout = String::from_utf8_lossy(&w.stdout);
-    assert!(
-        w_stdout.contains("output_matched") || w_stdout.contains("matched_line"),
-        "setup pane should print {}",
-        marker
+    // 7. Env reached the pane process: layout-level values apply everywhere and
+    //    a pane's own entry wins on conflict.
+    let a1_env = fs::read_to_string(m("a1.cmd")).unwrap();
+    assert_eq!(a1_env.trim(), "layout-value/pane-value/from-pane");
+}
+
+// The `[[startup]]` hook is one-shot maintenance: it must drop claims whose
+// worktree is gone, forget the focus cache, and never fail the server.
+#[test]
+fn the_startup_hook_clears_stale_state() {
+    let tmp_root = tmp_dir("wsc-startup");
+    let state_dir = tmp_root.join("state");
+    let gone = tmp_root.join("gone-worktree");
+    fs::create_dir_all(&gone).unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(EVENT_BIN)
+            .args(args)
+            .env("HERDR_PLUGIN_STATE_DIR", &state_dir)
+            .env("HERDR_WSM_CONFIG", tmp_root.join("no-such-config.yml"))
+            .output()
+            .expect("spawn plugin")
+    };
+
+    // Claim a worktree, then delete it out from under the claim.
+    let event_json = format!(
+        r#"{{"event":"workspace_focused","data":{{"type":"workspace_focused","workspace_id":"{}"}}}}"#,
+        "wStartupProbe"
     );
+    let focus = Command::new(EVENT_BIN)
+        .arg("event")
+        .env("HERDR_PLUGIN_STATE_DIR", &state_dir)
+        .env("HERDR_PLUGIN_EVENT", "workspace.focused")
+        .env("HERDR_PLUGIN_EVENT_JSON", &event_json)
+        .env("HERDR_WSM_CONFIG", tmp_root.join("no-such-config.yml"))
+        .output()
+        .expect("spawn plugin");
+    assert!(focus.status.success());
+
+    let out = run(&["startup"]);
+    assert!(out.status.success(), "startup hook failed: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("startup:"), "startup should report what it cleaned: {}", stderr);
+
+    // Runs cleanly even with no state directory at all.
+    let empty = tmp_dir("wsc-startup-empty");
+    let out = Command::new(EVENT_BIN)
+        .arg("startup")
+        .env("HERDR_PLUGIN_STATE_DIR", empty.join("missing"))
+        .output()
+        .expect("spawn plugin");
+    assert!(out.status.success());
+
+    fs::remove_dir_all(&tmp_root).unwrap();
+    fs::remove_dir_all(&empty).unwrap();
+}
+
+// The focus hook is the most frequently invoked entrypoint, so its opt-out has
+// to short-circuit before any config or server work happens.
+#[test]
+fn the_focus_hook_can_be_switched_off() {
+    let tmp_root = tmp_dir("wsc-focus-off");
+    let out = Command::new(EVENT_BIN)
+        .arg("event")
+        .env("HERDR_PLUGIN_STATE_DIR", tmp_root.join("state"))
+        .env("HERDR_PLUGIN_EVENT", "workspace.focused")
+        .env("HERDR_WSM_FOCUS_HOOK", "0")
+        // A config that would fail to parse if it were ever read.
+        .env("HERDR_WSM_CONFIG", "/dev/null/not-a-path")
+        .env(
+            "HERDR_PLUGIN_EVENT_JSON",
+            r#"{"event":"workspace_focused","data":{"workspace_id":"wOff"}}"#,
+        )
+        .output()
+        .expect("spawn plugin");
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
+        "the opt-out should do nothing at all"
+    );
+    // Nothing was recorded, so turning the hook back on still considers wOff.
+    assert!(!tmp_root.join("state/decided/wOff").exists());
+    fs::remove_dir_all(&tmp_root).unwrap();
+}
+
+// Opt-in live check of the agent path: `agent start` must report the agent ready
+// before the plugin moves on. Enable with e.g. HERDR_WSM_ITEST_AGENT=claude.
+#[test]
+fn starts_and_names_a_real_agent_when_configured() {
+    let Ok(kind) = std::env::var("HERDR_WSM_ITEST_AGENT") else {
+        eprintln!("skipping: set HERDR_WSM_ITEST_AGENT=<kind> to run the live agent check");
+        return;
+    };
+    if !server_up() {
+        eprintln!("skipping: no herdr server running");
+        return;
+    }
+
+    let tmp_root = tmp_dir("wsc-agent");
+    let config_path = tmp_root.join("config.yml");
+    let created = herdr(&["workspace", "create", "--cwd", tmp_root.to_str().unwrap(), "--label", "wsm-agent-itest", "--no-focus"]);
+    let workspace_id = created["workspace"]["workspace_id"].as_str().unwrap().to_string();
+
+    fs::write(
+        &config_path,
+        format!(
+            "layouts:\n  - id: agents\n    tabs:\n      - title: work\n        panes:\n          - title: agent\n            agent: {}\n            agentName: wsmitest\n",
+            kind
+        ),
+    )
+    .unwrap();
+
+    let out = Command::new(EVENT_BIN)
+        .args(["apply", "agents"])
+        .env("HERDR_WSM_CONFIG", &config_path)
+        .env("HERDR_PLUGIN_STATE_DIR", tmp_root.join("state"))
+        .env("HERDR_WSM_WORKSPACE", &workspace_id)
+        .output()
+        .expect("spawn plugin");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+
+    let agents = herdr(&["agent", "list"]);
+    let found = agents["agents"]
+        .as_array()
+        .map(|all| all.iter().any(|a| a["name"].as_str() == Some("wsmitest")))
+        .unwrap_or(false);
+
+    let _ = Command::new(herdr_bin()).args(["workspace", "close", &workspace_id]).output();
+    let _ = fs::remove_dir_all(&tmp_root);
+
+    assert!(out.status.success(), "apply failed:\n{}", stderr);
+    assert!(found, "the named agent should be live after apply:\n{}", stderr);
 }

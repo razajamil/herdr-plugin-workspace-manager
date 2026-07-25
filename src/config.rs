@@ -1,5 +1,6 @@
 // Config loading, validation, and workspace/layout matching.
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
@@ -8,6 +9,44 @@ use crate::env::Env;
 use crate::yaml::parse_yaml;
 
 pub const PLUGIN_ID: &str = "herdr-plugin-workspace-manager";
+
+// The interactive agents `herdr agent start --kind` accepts. Kept as a plain
+// list so `validate` can reject a typo up front with the full set, instead of
+// letting the layout half-build and then fail at `agent start` time.
+pub const AGENT_KINDS: &[&str] = &[
+    "pi",
+    "claude",
+    "codex",
+    "gemini",
+    "cursor",
+    "devin",
+    "agy",
+    "cline",
+    "omp",
+    "mastracode",
+    "opencode",
+    "copilot",
+    "kimi",
+    "kiro",
+    "droid",
+    "amp",
+    "grok",
+    "hermes",
+    "kilo",
+    "qodercli",
+    "maki",
+];
+
+// herdr's agent-name rule: `[a-z][a-z0-9_-]{0,31}`.
+fn is_valid_agent_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else { return false };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    name.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Setup {
@@ -42,10 +81,28 @@ pub enum Size {
     Cells(u64),
 }
 
+// An interactive coding agent to launch in a pane, via `herdr agent start`.
+// Unlike a `command`, herdr recognises the process: the start call only returns
+// once the agent is detected and ready for input, and the optional `prompt` can
+// then be submitted and waited on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Agent {
+    pub kind: String,
+    pub name: Option<String>,
+    pub args: Vec<String>,
+    pub prompt: Option<String>,
+    pub start_timeout_ms: Option<u64>,
+    pub prompt_timeout_ms: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pane {
     pub title: Option<String>,
     pub command: Option<String>,
+    /// Keep the pane at a shell prompt after `command` exits (default true).
+    pub persist: bool,
+    pub agent: Option<Agent>,
+    pub env: BTreeMap<String, String>,
     pub setup: bool,
     pub split: Option<Direction>,
     pub ratio: Option<f64>,
@@ -62,6 +119,8 @@ pub struct Tab {
 pub struct Layout {
     pub id: String,
     pub setup: Option<Setup>,
+    /// Applied to every pane in the layout; a pane's own `env` wins on conflict.
+    pub env: BTreeMap<String, String>,
     pub tabs: Vec<Tab>,
 }
 
@@ -323,6 +382,101 @@ fn normalize_size(raw: &Value, where_: &str) -> Result<Size, String> {
     }
 }
 
+// An `env:` block. Values are YAML scalars stringified the way an environment
+// variable has to be anyway, so `PORT: 3000` doesn't need quoting.
+fn normalize_env(raw: Option<&Value>, where_: &str) -> Result<BTreeMap<String, String>, String> {
+    let Some(raw) = raw else { return Ok(BTreeMap::new()) };
+    let Some(map) = raw.as_object() else {
+        return Err(format!("{}: env must be a mapping of NAME: value", where_));
+    };
+    let mut out = BTreeMap::new();
+    for (key, value) in map {
+        if key.trim().is_empty() {
+            return Err(format!("{}: env has an empty variable name", where_));
+        }
+        match value {
+            Value::Array(_) | Value::Object(_) => {
+                return Err(format!(
+                    "{}: env value for \"{}\" must be a string, number, or boolean",
+                    where_, key
+                ))
+            }
+            other => out.insert(key.clone(), js_string(other)),
+        };
+    }
+    Ok(out)
+}
+
+fn positive_ms(raw: Option<&Value>, where_: &str) -> Result<Option<u64>, String> {
+    let Some(raw) = raw else { return Ok(None) };
+    let n = js_number(raw);
+    if !n.is_finite() || n <= 0.0 || n.fract() != 0.0 {
+        return Err(format!("{}: must be a positive whole number of milliseconds", where_));
+    }
+    Ok(Some(n as u64))
+}
+
+fn normalize_agent(raw: &Value, where_: &str) -> Result<Option<Agent>, String> {
+    let Some(kind_raw) = opt(raw, "agent") else {
+        // Guard against agent-only fields on a pane with no `agent:` -- almost
+        // always a typo or a half-finished edit, and silently ignoring them
+        // would leave the user staring at a pane that never starts an agent.
+        for orphan in ["agentName", "agentArgs", "prompt", "agentTimeoutMs", "promptTimeoutMs"] {
+            if opt(raw, orphan).is_some() {
+                return Err(format!("{}: \"{}\" needs an \"agent\" on the same pane", where_, orphan));
+            }
+        }
+        return Ok(None);
+    };
+
+    let kind = as_string(Some(kind_raw), &format!("{}: agent", where_))?;
+    if !AGENT_KINDS.contains(&kind.as_str()) {
+        return Err(format!(
+            "{}: unsupported agent \"{}\" (herdr supports: {})",
+            where_,
+            kind,
+            AGENT_KINDS.join(", ")
+        ));
+    }
+
+    let name = opt(raw, "agentName")
+        .map(|v| as_string(Some(v), &format!("{}: agentName", where_)))
+        .transpose()?;
+    if let Some(name) = &name {
+        if !is_valid_agent_name(name) {
+            return Err(format!(
+                "{}: agentName \"{}\" must match [a-z][a-z0-9_-] and be at most 32 characters",
+                where_, name
+            ));
+        }
+    }
+
+    let args = match opt(raw, "agentArgs") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| match item {
+                Value::Array(_) | Value::Object(_) => {
+                    Err(format!("{}: agentArgs entries must be scalars", where_))
+                }
+                other => Ok(js_string(other)),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err(format!("{}: agentArgs must be a list", where_)),
+    };
+
+    Ok(Some(Agent {
+        kind,
+        name,
+        args,
+        prompt: opt(raw, "prompt")
+            .map(|v| as_string(Some(v), &format!("{}: prompt", where_)))
+            .transpose()?,
+        start_timeout_ms: positive_ms(opt(raw, "agentTimeoutMs"), &format!("{}: agentTimeoutMs", where_))?,
+        prompt_timeout_ms: positive_ms(opt(raw, "promptTimeoutMs"), &format!("{}: promptTimeoutMs", where_))?,
+    }))
+}
+
 fn normalize_pane(raw: &Value, layout_id: &str, tab_title: &str, index: usize) -> Result<Pane, String> {
     if !is_mapping(raw) {
         return Err(format!(
@@ -330,9 +484,27 @@ fn normalize_pane(raw: &Value, layout_id: &str, tab_title: &str, index: usize) -
             layout_id, tab_title, index
         ));
     }
+    let where_ = format!("layout \"{}\", tab \"{}\", pane {}", layout_id, tab_title, index);
+    let agent = normalize_agent(raw, &where_)?;
+    let command =
+        opt(raw, "command").map(|v| as_string(Some(v), &format!("{}: command", where_))).transpose()?;
+    if command.is_some() && agent.is_some() {
+        return Err(format!(
+            "{}: set either \"command\" or \"agent\", not both (an agent pane starts its agent itself)",
+            where_
+        ));
+    }
+    if opt(raw, "persist").is_some() && command.is_none() {
+        return Err(format!("{}: \"persist\" only applies to a pane with a \"command\"", where_));
+    }
     let mut pane = Pane {
         title: opt(raw, "title").map(|v| as_string(Some(v), "pane title")).transpose()?,
-        command: opt(raw, "command").map(|v| as_string(Some(v), "pane command")).transpose()?,
+        command,
+        // A command pane behaves like one you typed into: when the command
+        // exits you're left at a prompt, not with a pane that vanishes.
+        persist: raw.get("persist").map(truthy).unwrap_or(true),
+        agent,
+        env: normalize_env(opt(raw, "env"), &where_)?,
         setup: raw.get("setup").map(truthy).unwrap_or(false),
         split: None,
         ratio: None,
@@ -406,6 +578,7 @@ fn normalize_layout(raw: &Value, index: usize) -> Result<Layout, String> {
     }
     let id = as_string(raw.get("id"), &format!("layout {}: id", index))?;
     let setup = normalize_setup(opt(raw, "setup"), &id)?;
+    let env = normalize_env(opt(raw, "env"), &format!("layout \"{}\"", id))?;
     let tabs_raw = match raw.get("tabs") {
         Some(Value::Array(tabs)) if !tabs.is_empty() => tabs,
         _ => return Err(format!("layout \"{}\": needs at least one tab", id)),
@@ -429,7 +602,17 @@ fn normalize_layout(raw: &Value, index: usize) -> Result<Layout, String> {
             id
         ));
     }
-    Ok(Layout { id, setup, tabs })
+
+    // herdr requires agent names to be unique among live agents. A layout that
+    // reuses one would fail partway through `agent start`, so catch it here.
+    let mut names = std::collections::BTreeSet::new();
+    for name in tabs.iter().flat_map(|t| &t.panes).filter_map(|p| p.agent.as_ref()?.name.as_ref()) {
+        if !names.insert(name) {
+            return Err(format!("layout \"{}\": duplicate agentName \"{}\"", id, name));
+        }
+    }
+
+    Ok(Layout { id, setup, env, tabs })
 }
 
 fn normalize_match_rule(raw: &Value, ws_index: usize, i: usize) -> Result<MatchRule, String> {
@@ -776,6 +959,145 @@ mod tests {
         assert!(validate_config(&parse_yaml(&sized("40.5")).unwrap()).is_err()); // fixed cells must be whole
         assert!(validate_config(&parse_yaml(&sized("0")).unwrap()).is_err());
         assert!(validate_config(&parse_yaml(&sized("\"wide\"")).unwrap()).is_err());
+    }
+
+    // --- env / persist / agent fields ---------------------------------------
+
+    // A layout with one pane, plus whatever extra pane keys the test needs.
+    fn pane_cfg(extra: &[&str]) -> String {
+        let mut lines = vec![
+            "layouts:".to_string(),
+            "  - id: x".to_string(),
+            "    tabs:".to_string(),
+            "      - title: t".to_string(),
+            "        panes:".to_string(),
+            "          - title: a".to_string(),
+        ];
+        lines.extend(extra.iter().map(|l| format!("            {}", l)));
+        lines.join("\n")
+    }
+
+    fn only_pane(text: &str) -> Pane {
+        parse(text).layouts[0].tabs[0].panes[0].clone()
+    }
+
+    #[test]
+    fn env_blocks_are_read_at_layout_and_pane_level_and_stringify_scalars() {
+        let config = parse(
+            &[
+                "layouts:",
+                "  - id: x",
+                "    env:",
+                "      NODE_ENV: development",
+                "    tabs:",
+                "      - title: t",
+                "        panes:",
+                "          - title: a",
+                "            env:",
+                "              PORT: 3000",
+                "              DEBUG: true",
+            ]
+            .join("\n"),
+        );
+        assert_eq!(config.layouts[0].env.get("NODE_ENV").map(String::as_str), Some("development"));
+        let pane_env = &config.layouts[0].tabs[0].panes[0].env;
+        // Environment variables are strings; `PORT: 3000` shouldn't need quoting.
+        assert_eq!(pane_env.get("PORT").map(String::as_str), Some("3000"));
+        assert_eq!(pane_env.get("DEBUG").map(String::as_str), Some("true"));
+    }
+
+    #[test]
+    fn rejects_a_non_mapping_or_structured_env_value() {
+        assert!(parse_err(&pane_cfg(&["env: nope"])).contains("env must be a mapping"));
+        let nested = pane_cfg(&["env:", "  LIST:", "    - a"]);
+        assert!(validate_config(&parse_yaml(&nested).unwrap()).is_err());
+    }
+
+    #[test]
+    fn persist_defaults_to_true_and_only_applies_to_command_panes() {
+        assert!(only_pane(&pane_cfg(&["command: nvim"])).persist);
+        assert!(!only_pane(&pane_cfg(&["command: nvim", "persist: false"])).persist);
+        // A pane with no command has nothing to persist past.
+        assert!(parse_err(&pane_cfg(&["persist: false"])).contains("only applies to a pane with"));
+    }
+
+    #[test]
+    fn agent_panes_normalize_kind_name_args_and_prompt() {
+        let pane = only_pane(&pane_cfg(&[
+            "agent: claude",
+            "agentName: main",
+            "agentArgs:",
+            "  - --permission-mode",
+            "  - plan",
+            "prompt: read TASK.md",
+            "promptTimeoutMs: 120000",
+        ]));
+        let agent = pane.agent.unwrap();
+        assert_eq!(agent.kind, "claude");
+        assert_eq!(agent.name.as_deref(), Some("main"));
+        assert_eq!(agent.args, vec!["--permission-mode", "plan"]);
+        assert_eq!(agent.prompt.as_deref(), Some("read TASK.md"));
+        assert_eq!(agent.prompt_timeout_ms, Some(120_000));
+        assert_eq!(pane.command, None);
+    }
+
+    #[test]
+    fn rejects_an_unsupported_agent_kind_and_lists_the_supported_ones() {
+        let err = parse_err(&pane_cfg(&["agent: chatgpt"]));
+        assert!(err.contains("unsupported agent \"chatgpt\""));
+        assert!(err.contains("claude"), "the error lists what herdr does support");
+    }
+
+    #[test]
+    fn rejects_an_agent_name_herdr_would_refuse() {
+        for bad in ["Main", "1st", "with space", "a-very-long-agent-name-that-goes-past-32-chars"] {
+            let err = parse_err(&pane_cfg(&["agent: claude", &format!("agentName: \"{}\"", bad)]));
+            assert!(err.contains("agentName"), "{} should be rejected: {}", bad, err);
+        }
+        // Valid names are accepted.
+        assert!(only_pane(&pane_cfg(&["agent: claude", "agentName: rev-2_a"])).agent.is_some());
+    }
+
+    #[test]
+    fn rejects_a_pane_that_sets_both_command_and_agent() {
+        let err = parse_err(&pane_cfg(&["command: claude", "agent: claude"]));
+        assert!(err.contains("not both"));
+    }
+
+    #[test]
+    fn rejects_agent_only_fields_on_a_pane_with_no_agent() {
+        for orphan in ["agentName: main", "prompt: hi", "agentArgs:\n              - x"] {
+            let err = parse_err(&pane_cfg(&["command: nvim", orphan]));
+            assert!(err.contains("needs an \"agent\""), "{} -> {}", orphan, err);
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_agent_names_within_a_layout() {
+        let text = [
+            "layouts:",
+            "  - id: x",
+            "    tabs:",
+            "      - title: t",
+            "        panes:",
+            "          - title: a",
+            "            agent: claude",
+            "            agentName: main",
+            "          - title: b",
+            "            split: vertical",
+            "            agent: codex",
+            "            agentName: main",
+        ]
+        .join("\n");
+        assert!(parse_err(&text).contains("duplicate agentName"));
+    }
+
+    #[test]
+    fn rejects_a_non_positive_or_fractional_timeout() {
+        for bad in ["0", "-1", "1.5"] {
+            let err = parse_err(&pane_cfg(&["agent: claude", &format!("agentTimeoutMs: {}", bad)]));
+            assert!(err.contains("milliseconds"), "{} -> {}", bad, err);
+        }
     }
 
     #[test]
