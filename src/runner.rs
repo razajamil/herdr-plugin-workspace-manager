@@ -59,7 +59,7 @@ fn base36(mut n: u128) -> String {
 // Build a setup command wrapped with a completion sentinel printed after it.
 // The marker (HERDR_WSM_DONE_<token>) is assembled by printf's `%s`, so the
 // full literal never appears in the *echoed* command line -- only in the
-// command's actual output. That matters because `herdr wait output` also sees
+// command's actual output. That matters because `herdr pane wait-output` also sees
 // the echoed input, and would otherwise match immediately (before the command
 // finished). Using printf %s instead of shell quote tricks keeps this correct
 // across bash and zsh (including zsh's RC_QUOTES, where 'a''b' is a literal
@@ -230,7 +230,7 @@ pub fn execute_plan(plan: &Plan, target: &Target, env: &Env, log: Logger) -> Res
                 if *blocking {
                     let timeout = setup_timeout_ms.to_string();
                     let wait_res = run_herdr_json(
-                        &["wait", "output", &pane_id, "--match", &marker, "--timeout", &timeout],
+                        &["pane", "wait-output", &pane_id, "--match", &marker, "--timeout", &timeout],
                         env,
                     )?;
                     let line = wait_res
