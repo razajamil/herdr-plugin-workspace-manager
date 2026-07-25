@@ -2,6 +2,88 @@
 
 All notable changes to this project are documented here.
 
+## [0.6.0] - 2026-07-26
+
+Rebuilt on the herdr APIs that have landed since this plugin was first written.
+Existing configs keep working unchanged; everything new is additive.
+
+### Layouts are built declaratively, one request per tab
+
+- Each tab is now built with a single `layout.apply` request carrying the whole
+  pane tree — splits, labels, cwd, env and commands together — instead of a
+  round-trip per `pane split`, `pane rename` and `pane run`. The example config
+  went from ~20 sequential herdr invocations to 4. `layout.apply` has no CLI
+  wrapper, so the plugin talks to herdr's socket API directly for that one call
+  (newline-delimited JSON over `HERDR_SOCKET_PATH`).
+- A fixed `size:` in cells is resolved against the tab's cell area, queried once
+  per apply, instead of re-measuring the previous pane after every split.
+- **Pane commands are launched, not typed.** A pane's `command` is now the
+  pane's own process rather than keystrokes sent to its shell, so it doesn't
+  appear in scrollback and there's no race with a shell that isn't listening
+  yet. It still runs inside your interactive login shell, so `mise`/`asdf`/`nvm`
+  shims, aliases and `PATH` from your rc files apply exactly as before.
+- New `persist: false` on a pane lets it close when its command exits; the
+  default (`true`) keeps today's behaviour of returning to a prompt. The shell
+  you're handed back to is interactive but not a *login* shell, so login-only
+  profile side effects (starting an ssh-agent, printing a MOTD) don't fire a
+  second time per pane; it inherits the environment the login shell exported.
+
+### Agent panes
+
+- New `agent:` field starts a recognized coding agent with `herdr agent start`,
+  which returns only once herdr has **detected** the agent and marked it ready
+  for input — so a layout knows the agent actually came up instead of assuming
+  a typed `claude` worked. Companion fields: `agentName`, `agentArgs`, `prompt`,
+  `agentTimeoutMs`, `promptTimeoutMs`.
+- An agent that fails to start no longer takes the layout down with it: the
+  plugin warns, raises a notification, and continues with the other panes.
+
+### Setup is gated on a real signal
+
+- The setup command's completion and exit status are now recorded by the setup
+  script itself and read back from disk, replacing the sentinel that was printed
+  into the terminal and matched with `pane wait-output`. That sentinel could be
+  missed when it scrolled out of the matched rows or was echoed back by the
+  shell before the command ran, and needed careful quoting to work across bash
+  and zsh.
+- A setup that exceeds `HERDR_WSM_SETUP_TIMEOUT_MS` now warns instead of failing
+  the apply — the layout is already built by then.
+- An agent on the setup pane always waits for setup to finish, blocking or not.
+
+### Failures are visible
+
+- A blocking setup puts a `setup` token on its pane's sidebar row (`running`,
+  then `failed-<code>` / `timed-out`), and setup failures, agent-start failures
+  and failed applies raise a herdr notification. Previously all of these only
+  reached the plugin log.
+
+### Environment variables
+
+- New `env:` blocks at layout and pane level, passed to the pane process.
+  Pane entries win over layout entries.
+
+### Cheaper event handling
+
+- New `[[startup]]` hook does the state maintenance (reaping claims for removed
+  worktrees, clearing the focus cache) that used to run on every event
+  invocation. It also means a worktree removed while herdr wasn't running is
+  noticed before any event consults a stale claim.
+- `workspace.focused` — 47 of the last 50 recorded invocations of this plugin —
+  now exits after a single `stat`: the decided-cache check moved ahead of config
+  loading, and the shim skips its `find`-based rebuild check for that event.
+  Measured at ~11.4ms → ~8.4ms per event over 50 runs. Both figures are mostly
+  `sh` and process spawn, so this is a modest constant saving, not a step
+  change; the point is that the work is now bounded regardless of config size.
+- New `HERDR_WSM_FOCUS_HOOK=0` disables the focus trigger outright, for herdr
+  builds where TUI worktree creation does emit `worktree.created`. The README
+  documents how to check.
+
+### Removed
+
+- `HERDR_WSM_PANE_READY_MS`. The fixed pre-typing delay it configured is gone;
+  agents wait for an observed shell prompt (`pane process-info`) instead, and
+  commands no longer need one at all.
+
 ## [0.5.1] - 2026-07-25
 
 - Fix blocking setup (`setup.blocking: true`), which never worked. It shelled
