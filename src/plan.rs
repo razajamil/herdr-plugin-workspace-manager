@@ -119,11 +119,27 @@ fn single_quote(s: &str) -> String {
 // Launching the argv directly would silently drop all of it, and `npm run dev`
 // would stop resolving for anyone whose toolchain comes from a shell hook.
 fn shell_argv(script: &str) -> Vec<String> {
+    // Fish shell uses different syntax ($status instead of $?), so we need to
+    // detect it and handle it specially. We still want to run in the user's
+    // shell to get their environment, but we need to translate the script.
     vec![
         "sh".to_string(),
         "-c".to_string(),
-        format!("exec \"${{SHELL:-/bin/sh}}\" -lic {}", single_quote(script)),
+        format!(
+            r#"shell="${{SHELL:-/bin/sh}}"; case "$shell" in */fish) exec "$shell" -lic {} ;; *) exec "$shell" -lic {} ;; esac"#,
+            single_quote(&fish_script(script)),
+            single_quote(script)
+        ),
     ]
+}
+
+// Convert a POSIX shell script to fish syntax.
+// This is a minimal translation for the patterns used in this plugin.
+fn fish_script(script: &str) -> String {
+    let mut result = script.replace("$?", "$status");
+    // Fish doesn't support ${VAR:-default} syntax, use explicit fallback
+    result = result.replace("${SHELL:-/bin/sh}", "$SHELL");
+    result
 }
 
 // Hand the pane back to an interactive shell once the command finishes, so a
@@ -373,17 +389,24 @@ mod tests {
         validate_config(&parse_yaml(text).unwrap()).unwrap()
     }
 
-    const OUTER: &str = "exec \"${SHELL:-/bin/sh}\" -lic ";
-
     // The script the pane actually runs, unwrapped from its login-shell argv.
-    // Asserting on the raw argv would be misleading: the outer wrapper starts
-    // with the same `exec "$SHELL" -li` text the hand-back uses.
+    // The wrapper now uses a case statement to detect fish shell, so we need
+    // to extract the script from either the fish or POSIX branch.
     fn inner_script(spec: &PaneSpec) -> String {
         let argv = spec.command.as_ref().expect("pane has a command");
         assert_eq!(argv[0], "sh");
         assert_eq!(argv[1], "-c");
-        let rest = argv[2].strip_prefix(OUTER).expect("login-shell wrapper");
-        let quoted = rest
+        let wrapper = &argv[2];
+        // The wrapper format is:
+        // shell="${SHELL:-/bin/sh}"; case "$shell" in */fish) exec "$shell" -lic '<fish-script>' ;; *) exec "$shell" -lic '<posix-script>' ;; esac
+        // Extract the POSIX script (second quoted block, after the last -lic)
+        let posix_prefix = "*) exec \"$shell\" -lic ";
+        let posix_start = wrapper.find(posix_prefix).expect("POSIX branch in wrapper") + posix_prefix.len();
+        let rest = &wrapper[posix_start..];
+        // The script is quoted and followed by " ;; esac"
+        let end = rest.rfind(" ;; esac").expect("end of POSIX branch");
+        let quoted = &rest[..end];
+        let quoted = quoted
             .strip_prefix('\'')
             .and_then(|s| s.strip_suffix('\''))
             .expect("script is one quoted word");
@@ -769,8 +792,9 @@ mod tests {
         let argv = shell_argv(script);
         // The whole script is one shell word; embedded quotes are escaped, not lost.
         assert!(argv[2].contains(r"'\''"), "{}", argv[2]);
-        assert!(argv[2].starts_with("exec \"${SHELL:-/bin/sh}\" -lic '"));
-        assert!(argv[2].ends_with('\''));
+        // The wrapper now uses a case statement to detect fish shell
+        assert!(argv[2].starts_with("shell=\"${SHELL:-/bin/sh}\"; case \"$shell\" in */fish)"));
+        assert!(argv[2].ends_with("esac"));
     }
 
     #[test]
