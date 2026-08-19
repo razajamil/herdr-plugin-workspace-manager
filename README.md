@@ -214,7 +214,7 @@ lives in [`config.example.yml`](./config.example.yml).
 | Field | Where | Meaning |
 | --- | --- | --- |
 | `layouts[].id` | layout | Unique id, referenced by `defaultLayout`. |
-| `layouts[].setup.command` | layout | Optional command run on the `setup: true` pane. |
+| `layouts[].setup.command` | layout | Optional command(s) run on the `setup: true` pane — a single string, or a list run consecutively. |
 | `layouts[].setup.blocking` | layout | If `true`, no further tabs spawn until setup finishes. |
 | `layouts[].env` | layout | Environment variables for every pane in the layout. |
 | `tabs[].title` | tab | Tab label. The first tab replaces the worktree's existing tab. |
@@ -381,6 +381,20 @@ first; with `blocking: true` the plugin waits for it to finish before building
 any later tab. After setup, that pane still runs its own `command` (or starts
 its `agent` — an agent on the setup pane always waits for setup, blocking or
 not). Put the setup pane first so nothing spawns ahead of it.
+
+`setup.command` also accepts a list, run consecutively:
+
+```yaml
+setup:
+  command:
+    - mise install
+    - npm install
+  blocking: true
+```
+
+Each entry only runs if the previous one succeeded, so the recorded exit
+status is the first failing command's, not a later step run against a
+broken state.
 
 While a blocking setup runs, the pane's sidebar row carries a `setup` token
 (`running`, then `failed-<code>` or `timed-out` if it doesn't succeed), and a
