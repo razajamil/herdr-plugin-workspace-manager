@@ -255,7 +255,8 @@ pub fn build_plan(layout: &Layout, ctx: &PlanContext) -> Plan {
     // Without a known tab area, treat every region as unmeasurable: percentages
     // still work (they're relative), and a cell size falls back to an even split.
     let area = ctx.area.unwrap_or((0.0, 0.0));
-    let setup_command = layout.setup.as_ref().map(|s| s.command.as_str());
+    let setup_script = layout.setup.as_ref().map(|s| s.script());
+    let setup_command = setup_script.as_deref();
 
     let tabs = layout
         .tabs

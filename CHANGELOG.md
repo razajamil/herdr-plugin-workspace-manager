@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- `layouts[].setup.command` now also accepts a list of commands, run
+  consecutively: each one only runs if the previous one succeeded, and the
+  recorded exit status is the first failing command's. A single string keeps
+  working unchanged.
+
 ## [0.6.0] - 2026-07-26
 
 Rebuilt on the herdr APIs that have landed since this plugin was first written.

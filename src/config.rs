@@ -50,8 +50,19 @@ fn is_valid_agent_name(name: &str) -> bool {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Setup {
-    pub command: String,
+    /// One or more commands, run consecutively. A single-string `command:` is
+    /// normalized to a one-element list.
+    pub command: Vec<String>,
     pub blocking: bool,
+}
+
+impl Setup {
+    /// The full setup script: each command runs only if the previous one
+    /// succeeded. The recorded exit status is therefore the first failing
+    /// command's, not a later step run against a broken state.
+    pub fn script(&self) -> String {
+        self.command.join(" && ")
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +284,20 @@ fn as_string(value: Option<&Value>, what: &str) -> Result<String, String> {
     }
 }
 
+/// A single non-empty string, or a non-empty list of them -- e.g.
+/// `setup.command: npm install` vs `setup.command: [npm install, npm build]`.
+fn as_string_list(value: Option<&Value>, what: &str) -> Result<Vec<String>, String> {
+    match value {
+        Some(Value::String(s)) if !s.trim().is_empty() => Ok(vec![s.clone()]),
+        Some(Value::Array(items)) if !items.is_empty() => items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| as_string(Some(item), &format!("{}[{}]", what, i)))
+            .collect(),
+        _ => Err(format!("{} must be a non-empty string or a non-empty list of non-empty strings", what)),
+    }
+}
+
 fn is_mapping(v: &Value) -> bool {
     v.is_object()
 }
@@ -325,7 +350,7 @@ fn normalize_setup(raw: Option<&Value>, layout_id: &str) -> Result<Option<Setup>
     if !is_mapping(raw) {
         return Err(format!("layout \"{}\": setup must be a mapping", layout_id));
     }
-    let command = as_string(raw.get("command"), &format!("layout \"{}\": setup.command", layout_id))?;
+    let command = as_string_list(raw.get("command"), &format!("layout \"{}\": setup.command", layout_id))?;
     let blocking = raw.get("blocking").map(truthy).unwrap_or(false);
     Ok(Some(Setup { command, blocking }))
 }
@@ -861,7 +886,7 @@ mod tests {
         let layout = find_layout(&config, "web-app").unwrap();
         assert_eq!(
             layout.setup,
-            Some(Setup { command: "mise run setup".to_string(), blocking: true })
+            Some(Setup { command: vec!["mise run setup".to_string()], blocking: true })
         );
         // vertical -> right, horizontal -> down
         assert_eq!(layout.tabs[0].panes[1].split, Some(Direction::Right));
@@ -1133,6 +1158,57 @@ mod tests {
         ]
         .join("\n");
         assert!(parse_err(&text).contains("no pane has"));
+    }
+
+    #[test]
+    fn setup_command_accepts_a_list_run_consecutively() {
+        let text = [
+            "layouts:",
+            "  - id: x",
+            "    setup:",
+            "      command:",
+            "        - npm install",
+            "        - npm run build",
+            "    tabs:",
+            "      - title: t",
+            "        panes:",
+            "          - title: a",
+            "            setup: true",
+        ]
+        .join("\n");
+        let config = parse(&text);
+        let setup = find_layout(&config, "x").unwrap().setup.clone().unwrap();
+        assert_eq!(setup.command, vec!["npm install".to_string(), "npm run build".to_string()]);
+        assert_eq!(setup.script(), "npm install && npm run build");
+    }
+
+    #[test]
+    fn rejects_an_empty_setup_command_list() {
+        // The plugin's own YAML parser has no flow-sequence syntax to write
+        // `[]` in config, but `normalize_setup` still guards against it (e.g.
+        // reachable via a future syntax, or a hand-built Value in a test).
+        let raw = serde_json::json!({ "command": [] });
+        let err = normalize_setup(Some(&raw), "x").unwrap_err();
+        assert!(err.contains("setup.command"), "{}", err);
+    }
+
+    #[test]
+    fn rejects_a_non_string_entry_in_a_setup_command_list() {
+        let text = [
+            "layouts:",
+            "  - id: x",
+            "    setup:",
+            "      command:",
+            "        - npm install",
+            "        - 3",
+            "    tabs:",
+            "      - title: t",
+            "        panes:",
+            "          - title: a",
+            "            setup: true",
+        ]
+        .join("\n");
+        assert!(parse_err(&text).contains("setup.command[1]"));
     }
 
     #[test]

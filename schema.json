@@ -50,12 +50,14 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["command"],
-      "description": "Optional one-off command run on the single setup:true pane before the rest of the layout.",
+      "description": "Optional one-off command(s) run on the single setup:true pane before the rest of the layout.",
       "properties": {
         "command": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Command to run on the setup:true pane (e.g. \"npm install\")."
+          "description": "Command(s) to run on the setup:true pane (e.g. \"npm install\"). A list runs each entry in turn, stopping at the first that fails.",
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+          ]
         },
         "blocking": {
           "type": "boolean",

@@ -439,7 +439,7 @@ fn print_layouts(config: &Config) {
         if let Some(setup) = &layout.setup {
             println!(
                 "    setup: {}{}",
-                setup.command,
+                setup.script(),
                 if setup.blocking { " (blocking)" } else { "" }
             );
         }

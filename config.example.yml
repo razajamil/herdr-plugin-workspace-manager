@@ -51,17 +51,22 @@
 #   process. Pane entries win over layout entries. Values need no quoting.
 #
 # setup (optional, per layout):
-#   Runs ONE command on the single pane marked `setup: true`, before that pane's
-#   own command or agent. If `blocking: true`, no further tabs are spawned until
-#   it finishes. An agent on the setup pane always waits for setup regardless.
-#   At most ONE pane per layout may set `setup: true`.
+#   Runs on the single pane marked `setup: true`, before that pane's own
+#   command or agent. `command` is a single string or a list run consecutively
+#   (each one only runs if the previous one succeeded; the recorded exit
+#   status is the first failing command's). If `blocking: true`, no further
+#   tabs are spawned until it finishes. An agent on the setup pane always
+#   waits for setup regardless. At most ONE pane per layout may set
+#   `setup: true`.
 # ---------------------------------------------------------------------------
 layouts:
   - id: web-app
     env:
       NODE_ENV: development
     setup:
-      command: npm install
+      command:
+        - mise install
+        - npm install
       blocking: true
     tabs:
       - title: code
