@@ -2,12 +2,16 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.7.0] - 2026-08-22
 
 - `layouts[].setup.command` now also accepts a list of commands, run
   consecutively: each one only runs if the previous one succeeded, and the
   recorded exit status is the first failing command's. A single string keeps
   working unchanged.
+- Fix pane commands hanging forever when the user's login shell is fish. The
+  wrapper that runs a pane's command inside `$SHELL -lic` relied on `$?`, which
+  fish doesn't understand; fish is now detected and the script translated to
+  its `$status` syntax before it runs.
 
 ## [0.6.0] - 2026-07-26
 
