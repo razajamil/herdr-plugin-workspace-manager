@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.8.0] - 2026-08-23
 
 - New root-level `globalLayout` field: names a `layouts[].id` to use as the
   last-resort fallback for a fresh worktree when nothing else resolves a
