@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- New root-level `globalLayout` field: names a `layouts[].id` to use as the
+  last-resort fallback for a fresh worktree when nothing else resolves a
+  layout — no `workspaces[]` entry matches at all, or the matched one has no
+  `defaultLayout` and no firing `layoutMatching` rule. A workspace's own
+  `defaultLayout`/`layoutMatching` still takes priority.
+
 ## [0.7.0] - 2026-08-22
 
 - `layouts[].setup.command` now also accepts a list of commands, run

@@ -217,6 +217,7 @@ lives in [`config.example.yml`](./config.example.yml).
 | `layouts[].setup.command` | layout | Optional command(s) run on the `setup: true` pane — a single string, or a list run consecutively. |
 | `layouts[].setup.blocking` | layout | If `true`, no further tabs spawn until setup finishes. |
 | `layouts[].env` | layout | Environment variables for every pane in the layout. |
+| `globalLayout` | root | Layout id used as the **global default** — see [Global default layout](#global-default-layout). |
 | `tabs[].title` | tab | Tab label. The first tab replaces the worktree's existing tab. |
 | `panes[].title` | pane | Pane label. |
 | `panes[].command` | pane | Optional command to run in the pane, in your interactive login shell. Mutually exclusive with `agent`. |
@@ -249,10 +250,37 @@ Within a matched workspace, `layoutMatching` chooses a layout from the new
 worktree's **branch** name. Rules are tried in the order you write them and the
 first whose `worktreePattern` matches wins; if none match (or the worktree has
 no branch, e.g. a detached HEAD) the `defaultLayout` applies. With neither a
-matching rule nor a `defaultLayout`, nothing is applied. `worktreePattern` is a
-glob over the entire branch name: `*` matches any run of characters (including
-`/`) and `?` matches a single one, so `fix/rwr-*` matches `fix/rwr-142-login`
-but not `hotfix/rwr-1`.
+matching rule nor a `defaultLayout`, the [global default layout](#global-default-layout)
+applies, if one is configured. `worktreePattern` is a glob over the entire
+branch name: `*` matches any run of characters (including `/`) and `?` matches
+a single one, so `fix/rwr-*` matches `fix/rwr-142-login` but not `hotfix/rwr-1`.
+
+### Global default layout
+
+Set the root-level `globalLayout` to a layout id to make it the fallback for
+any fresh worktree that nothing else resolves a layout for — a repo with no
+`workspaces[]` entry at all, or a matched workspace with no `defaultLayout`
+and no firing `layoutMatching` rule:
+
+```yaml
+globalLayout: fallback   # applies wherever nothing more specific matches
+
+layouts:
+  - id: fallback
+    tabs:
+      - panes:
+          - title: shell
+  - id: web-app
+    tabs: [...]
+
+workspaces:
+  - repo: ~/code/web-app
+    defaultLayout: web-app   # still wins for this repo
+```
+
+A workspace's own `defaultLayout` (or a matching `layoutMatching` rule) always
+takes priority over `globalLayout`. It's a single id, so there's no way to
+configure more than one global default.
 
 ### Split direction
 

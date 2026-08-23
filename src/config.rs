@@ -154,6 +154,10 @@ pub struct Workspace {
 pub struct Config {
     pub layouts: Vec<Layout>,
     pub workspaces: Vec<Workspace>,
+    /// Layout id to fall back to when nothing else resolves one — no
+    /// workspace matches, or the matched workspace has no `defaultLayout` and
+    /// no `layoutMatching` rule fires.
+    pub global_layout: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -709,6 +713,8 @@ pub fn validate_config(raw: &Value) -> Result<Config, String> {
         }
     }
 
+    let global_layout = opt(raw, "globalLayout").map(|v| as_string(Some(v), "globalLayout")).transpose()?;
+
     let workspaces = match raw.get("workspaces") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Array(items)) => items
@@ -718,6 +724,12 @@ pub fn validate_config(raw: &Value) -> Result<Config, String> {
             .collect::<Result<Vec<_>, _>>()?,
         Some(_) => return Err("workspaces must be a list".to_string()),
     };
+
+    if let Some(global_layout) = &global_layout {
+        if !seen.contains(global_layout) {
+            return Err(format!("globalLayout references unknown layout \"{}\"", global_layout));
+        }
+    }
 
     // Cross-check: every layout referenced by a workspace must exist.
     for ws in &workspaces {
@@ -740,7 +752,7 @@ pub fn validate_config(raw: &Value) -> Result<Config, String> {
         }
     }
 
-    Ok(Config { layouts, workspaces })
+    Ok(Config { layouts, workspaces, global_layout })
 }
 
 pub fn load_config(env: &Env) -> Result<(Option<PathBuf>, Config), String> {
@@ -755,6 +767,12 @@ pub fn load_config(env: &Env) -> Result<(Option<PathBuf>, Config), String> {
 
 pub fn find_layout<'a>(config: &'a Config, id: &str) -> Option<&'a Layout> {
     config.layouts.iter().find(|l| l.id == id)
+}
+
+// The layout named by the root `globalLayout` field, if any. Config
+// validation already guarantees it references a real layout.
+fn global_default_layout(config: &Config) -> Option<&Layout> {
+    find_layout(config, config.global_layout.as_deref()?)
 }
 
 // Is `checkout_path` inside (or equal to) the configured workspace `ws_path`?
@@ -812,12 +830,12 @@ fn resolve_layout_for<'a>(config: &'a Config, ws: &Workspace, branch: Option<&st
 
 // Find the layout to apply for a freshly created worktree. The most specific
 // workspace (by repo/path) that actually yields a layout wins; within it,
-// layoutMatching branch patterns are tried before defaultLayout.
-pub fn match_workspace_layout<'a>(
-    config: &'a Config,
-    target: &MatchTarget,
-) -> Option<(&'a Workspace, &'a Layout)> {
-    let mut best: Option<(&Workspace, &Layout)> = None;
+// layoutMatching branch patterns are tried before defaultLayout. When no
+// workspace yields a layout at all — none matches, or the matched ones have
+// neither a firing layoutMatching rule nor a defaultLayout — the layout marked
+// `default: true` (if any) applies as the last resort.
+pub fn match_workspace_layout<'a>(config: &'a Config, target: &MatchTarget) -> Option<&'a Layout> {
+    let mut best: Option<&Layout> = None;
     let mut best_score = -1i64;
     for ws in &config.workspaces {
         let Some(score) = match_score(ws, target) else { continue };
@@ -825,11 +843,11 @@ pub fn match_workspace_layout<'a>(
             continue;
         }
         if let Some(layout) = resolve_layout_for(config, ws, target.branch.as_deref()) {
-            best = Some((ws, layout));
+            best = Some(layout);
             best_score = score;
         }
     }
-    best
+    best.or_else(|| global_default_layout(config))
 }
 
 #[cfg(test)]
@@ -1264,7 +1282,7 @@ mod tests {
         let config = parse(&sample());
         let root = home(".herdr/worktrees/web-app");
         let m = match_workspace_layout(&config, &target(&format!("{}/my-branch", root))).unwrap();
-        assert_eq!(m.1.id, "web-app");
+        assert_eq!(m.id, "web-app");
         // exact path also matches
         assert!(match_workspace_layout(&config, &target(&root)).is_some());
         // unrelated path does not
@@ -1295,7 +1313,7 @@ mod tests {
             .join("\n"),
         );
         let m = match_workspace_layout(&cfg, &target("/repos/special/branch")).unwrap();
-        assert_eq!(m.1.id, "child");
+        assert_eq!(m.id, "child");
     }
 
     fn repo_cfg() -> String {
@@ -1326,7 +1344,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(m.1.id, "rf");
+        assert_eq!(m.id, "rf");
     }
 
     #[test]
@@ -1342,7 +1360,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(m.1.id, "rf");
+        assert_eq!(m.id, "rf");
     }
 
     #[test]
@@ -1393,7 +1411,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(m.1.id, "byrepo");
+        assert_eq!(m.id, "byrepo");
     }
 
     #[test]
@@ -1471,7 +1489,7 @@ mod tests {
                 branch: branch.map(String::from),
             },
         )
-        .map(|(_, l)| l.id.clone())
+        .map(|l| l.id.clone())
     }
 
     #[test]
@@ -1517,7 +1535,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(m.1.id, "first");
+        assert_eq!(m.id, "first");
     }
 
     #[test]
@@ -1545,7 +1563,7 @@ mod tests {
             )
         };
         // branch matches -> applies
-        assert_eq!(with_branch("release/1").unwrap().1.id, "only");
+        assert_eq!(with_branch("release/1").unwrap().id, "only");
         // branch doesn't match and there's no defaultLayout -> nothing applies
         assert!(with_branch("main").is_none());
     }
@@ -1579,9 +1597,9 @@ mod tests {
             )
         };
         // under the more specific path, but on `main` -> narrow doesn't match -> broad
-        assert_eq!(with_branch("main").unwrap().1.id, "broad");
+        assert_eq!(with_branch("main").unwrap().id, "broad");
         // on a feat branch -> the more specific workspace's rule wins
-        assert_eq!(with_branch("feat/y").unwrap().1.id, "narrow");
+        assert_eq!(with_branch("feat/y").unwrap().id, "narrow");
     }
 
     #[test]
@@ -1611,5 +1629,58 @@ mod tests {
         ]
         .join("\n");
         assert!(parse_err(&text).contains("worktreePattern"));
+    }
+
+    #[test]
+    fn rejects_a_global_layout_referencing_an_unknown_layout() {
+        let text = ["layouts:".to_string(), layout_y("known"), "globalLayout: nope".to_string()].join("\n");
+        assert!(parse_err(&text).contains("globalLayout references unknown layout \"nope\""));
+    }
+
+    #[test]
+    fn global_layout_applies_when_nothing_else_matches() {
+        let text = ["layouts:".to_string(), layout_y("fallback"), "globalLayout: fallback".to_string()]
+            .join("\n");
+        let config = parse(&text);
+        assert_eq!(config.global_layout.as_deref(), Some("fallback"));
+
+        // no workspaces configured at all
+        assert_eq!(match_workspace_layout(&config, &target("/wherever")).unwrap().id, "fallback");
+    }
+
+    #[test]
+    fn global_layout_fills_in_for_a_matched_workspace_with_no_default() {
+        let text = [
+            "layouts:".to_string(),
+            layout_y("fallback"),
+            layout_y("specific"),
+            "globalLayout: fallback".to_string(),
+            "workspaces:".to_string(),
+            "  - path: /wt/r".to_string(),
+        ]
+        .join("\n");
+        let config = parse(&text);
+
+        // the matched workspace has no defaultLayout -> global layout applies
+        assert_eq!(match_workspace_layout(&config, &target("/wt/r/branch")).unwrap().id, "fallback");
+
+        // an unrelated path still matches no workspace, so it also falls back
+        assert_eq!(match_workspace_layout(&config, &target("/unrelated")).unwrap().id, "fallback");
+    }
+
+    #[test]
+    fn a_workspaces_own_default_layout_wins_over_the_global_layout() {
+        let text = [
+            "layouts:".to_string(),
+            layout_y("fallback"),
+            layout_y("specific"),
+            "globalLayout: fallback".to_string(),
+            "workspaces:".to_string(),
+            "  - path: /wt/r".to_string(),
+            "    defaultLayout: specific".to_string(),
+        ]
+        .join("\n");
+        let config = parse(&text);
+        assert_eq!(match_workspace_layout(&config, &target("/wt/r/branch")).unwrap().id, "specific");
     }
 }

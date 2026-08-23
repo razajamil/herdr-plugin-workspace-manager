@@ -15,6 +15,11 @@
       "type": "array",
       "description": "Map a repo (or worktree path) to a default layout.",
       "items": { "$ref": "#/$defs/workspace" }
+    },
+    "globalLayout": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Layout id to fall back to for a fresh worktree when nothing else resolves a layout -- no workspaces[] entry matches, or the matched one has no defaultLayout and no firing layoutMatching rule. Must reference a layouts[].id."
     }
   },
   "$defs": {

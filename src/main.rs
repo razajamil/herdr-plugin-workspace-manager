@@ -205,7 +205,7 @@ fn cmd_event(env: &Env) -> Result<(), String> {
         repo_name: info.repo_name.clone(),
         branch,
     };
-    let Some((_, layout)) = match_workspace_layout(&config, &target) else {
+    let Some(layout) = match_workspace_layout(&config, &target) else {
         return done(Some(&format!(
             "no workspace/default layout matches {}; skipping",
             checkout_path
@@ -332,7 +332,7 @@ fn cmd_apply(env: &Env, layout_arg: Option<&str>) -> Result<(), String> {
                 repo_name: ctx_str(&["workspace", "worktree", "repo_name"]),
                 branch,
             };
-            let Some((_, layout)) = match_workspace_layout(&config, &match_target) else {
+            let Some(layout) = match_workspace_layout(&config, &match_target) else {
                 return Err(format!(
                     "no layout id given and no workspace default matches {}",
                     target.cwd.as_deref().unwrap_or("null")
@@ -432,7 +432,8 @@ fn describe_pane(pane: &Pane) -> String {
 fn print_layouts(config: &Config) {
     println!("Layouts ({}):", config.layouts.len());
     for layout in &config.layouts {
-        println!("  {}", layout.id);
+        let is_global = config.global_layout.as_deref() == Some(layout.id.as_str());
+        println!("  {}{}", layout.id, if is_global { " (global default)" } else { "" });
         if !layout.env.is_empty() {
             println!("    {}", describe_env(&layout.env));
         }

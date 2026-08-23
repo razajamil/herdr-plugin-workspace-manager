@@ -58,6 +58,12 @@
 #   tabs are spawned until it finishes. An agent on the setup pane always
 #   waits for setup regardless. At most ONE pane per layout may set
 #   `setup: true`.
+#
+# globalLayout (optional, root-level, not per layout): a layouts[].id to use
+#   as the global fallback layout, applied to a fresh worktree when nothing
+#   else resolves one -- a repo with no workspaces[] entry at all, or a
+#   matched workspace with no defaultLayout and no firing layoutMatching rule.
+#   See below, after workspaces:.
 # ---------------------------------------------------------------------------
 layouts:
   - id: web-app
@@ -148,8 +154,8 @@ layouts:
 #     e.g. `fix/rwr-*` matches `fix/rwr-142-login` but not `hotfix/rwr-1`.
 #     Ordering is yours -- list the most specific rules first.
 #   defaultLayout (optional): applied when no layoutMatching rule matches (or
-#     the worktree has no branch). If there's also no defaultLayout, nothing is
-#     applied to that worktree.
+#     the worktree has no branch). If there's also no defaultLayout, the
+#     root-level globalLayout (if set, see below) applies instead.
 # ---------------------------------------------------------------------------
 workspaces:
   - repo: ~/code/web-app
@@ -161,3 +167,12 @@ workspaces:
       - title: Docs / research branches
         worktreePattern: docs/*
         layout: web-app-docs
+
+# ---------------------------------------------------------------------------
+# globalLayout (optional): a layouts[].id used as the last-resort fallback --
+# applied to a fresh worktree when nothing above resolves a layout, i.e. a
+# repo with no workspaces[] entry at all, or a matched one with no
+# defaultLayout and no firing layoutMatching rule. A workspace's own
+# defaultLayout/layoutMatching always takes priority over this.
+# ---------------------------------------------------------------------------
+# globalLayout: web-app-docs
