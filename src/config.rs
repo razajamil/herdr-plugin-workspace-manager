@@ -168,15 +168,27 @@ pub struct MatchTarget {
     pub branch: Option<String>,
 }
 
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+// The user's home directory. Windows keeps it in USERPROFILE; HOME is usually
+// unset there, or an MSYS-style path (/c/Users/..) that Windows APIs reject.
+pub fn home_dir() -> PathBuf {
+    if !cfg!(windows) {
+        return std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+    }
+    // An MSYS-style HOME (/c/Users/..) is not a Windows path, so it is skipped.
+    let profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    let msys_safe_home = std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_absolute());
+    let drive_home = std::env::var_os("HOMEDRIVE")
+        .zip(std::env::var_os("HOMEPATH"))
+        .map(|(d, p)| PathBuf::from(format!("{}{}", d.to_string_lossy(), p.to_string_lossy())));
+    profile.or(msys_safe_home).or(drive_home).unwrap_or_else(|| PathBuf::from(r"C:\"))
 }
 
 pub fn expand_home(p: &str) -> String {
     if p == "~" {
         return home_dir().to_string_lossy().into_owned();
     }
-    if let Some(rest) = p.strip_prefix("~/") {
+    let rest = p.strip_prefix("~/").or_else(|| if cfg!(windows) { p.strip_prefix("~\\") } else { None });
+    if let Some(rest) = rest {
         return home_dir().join(rest).to_string_lossy().into_owned();
     }
     p.to_string()
@@ -775,10 +787,27 @@ fn global_default_layout(config: &Config) -> Option<&Layout> {
     find_layout(config, config.global_layout.as_deref()?)
 }
 
+// A comparable form of a path: `~` expanded and resolved. On Windows it is also
+// normalised, so `C:\Repo\wt`, `c:/repo/wt/` and `\\?\C:\Repo\wt` all compare
+// equal (and `\\?\UNC\srv\share` equals `\\srv\share`): one separator, no
+// verbatim prefix, no trailing slash, folded case.
+pub fn path_key(p: &str) -> String {
+    let resolved = resolve_path(&expand_home(p));
+    if !cfg!(windows) {
+        return resolved;
+    }
+    let lower = resolved.replace('\\', "/").to_lowercase();
+    let bare = match lower.strip_prefix("//?/unc/") {
+        Some(share) => format!("//{}", share),
+        None => lower.strip_prefix("//?/").unwrap_or(&lower).to_string(),
+    };
+    bare.trim_end_matches('/').to_string()
+}
+
 // Is `checkout_path` inside (or equal to) the configured workspace `ws_path`?
 fn is_under(checkout_path: &str, ws_path: &str) -> bool {
-    let a = resolve_path(&expand_home(checkout_path));
-    let b = resolve_path(&expand_home(ws_path));
+    let a = path_key(checkout_path);
+    let b = path_key(ws_path);
     a == b || a.starts_with(&format!("{}/", b))
 }
 
@@ -788,9 +817,9 @@ fn is_under(checkout_path: &str, ws_path: &str) -> bool {
 // path matches.
 fn match_score(ws: &Workspace, target: &MatchTarget) -> Option<i64> {
     if let Some(repo) = &ws.repo {
-        let repo_resolved = resolve_path(&expand_home(repo));
+        let repo_resolved = path_key(repo);
         if let Some(root) = &target.repo_root {
-            if resolve_path(&expand_home(root)) == repo_resolved {
+            if path_key(root) == repo_resolved {
                 return Some(1_000_000);
             }
         }
@@ -800,7 +829,7 @@ fn match_score(ws: &Workspace, target: &MatchTarget) -> Option<i64> {
     }
     if let (Some(ws_path), Some(checkout)) = (&ws.path, &target.checkout_path) {
         if is_under(checkout, ws_path) {
-            return Some(resolve_path(&expand_home(ws_path)).len() as i64);
+            return Some(path_key(ws_path).len() as i64);
         }
     }
     None
@@ -848,6 +877,39 @@ pub fn match_workspace_layout<'a>(config: &'a Config, target: &MatchTarget) -> O
         }
     }
     best.or_else(|| global_default_layout(config))
+}
+
+#[cfg(all(test, windows))]
+mod windows_path_tests {
+    use super::*;
+
+    #[test]
+    fn spellings_of_the_same_windows_path_compare_equal() {
+        let plain = path_key(r"C:\Repo\wt");
+        assert_eq!(plain, "c:/repo/wt");
+        assert_eq!(path_key("c:/repo/wt/"), plain);
+        assert_eq!(path_key(r"\\?\C:\Repo\wt"), plain);
+    }
+
+    #[test]
+    fn a_verbatim_unc_path_equals_its_plain_form() {
+        assert_eq!(path_key(r"\\?\UNC\srv\share\x"), path_key(r"\\srv\share\x"));
+        assert_eq!(path_key(r"\\srv\share\x"), "//srv/share/x");
+    }
+
+    #[test]
+    fn a_worktree_is_under_its_workspace_whatever_the_spelling() {
+        assert!(is_under("C:/Users/me/dev/app-wt", r"c:\users\ME\dev"));
+        assert!(is_under(r"\\?\C:\Users\me\dev", "C:/Users/me/dev/"));
+        assert!(!is_under("C:/Users/me/devops", "C:/Users/me/dev"));
+    }
+
+    #[test]
+    fn tilde_expands_from_the_profile_with_either_separator() {
+        let home = path_key("~");
+        assert_eq!(path_key("~/dev"), format!("{}/dev", home));
+        assert_eq!(path_key(r"~\dev"), format!("{}/dev", home));
+    }
 }
 
 #[cfg(test)]

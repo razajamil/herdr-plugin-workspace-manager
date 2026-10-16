@@ -3,24 +3,45 @@ name = "Workspace Manager"
 version = "0.8.0"
 min_herdr_version = "0.7.5"
 description = "Declarative tab/pane layouts with per-workspace defaults applied automatically when a worktree is created."
-platforms = ["linux", "macos"]
+platforms = ["linux", "macos", "windows"]
 
-# All entrypoints go through bin/herdr-workspace-manager, an sh shim that
-# compiles the Rust binary on first use (cargo build --release) and execs it.
-# After that one-off build there is no runtime dependency at all.
+# Linux and macOS: every entrypoint goes through bin/herdr-workspace-manager, an
+# sh shim that compiles the Rust binary on first use (cargo build --release) and
+# execs it. After that one-off build there is no runtime dependency at all.
+#
+# Windows: the same binary, built once by the [[build]] step below and run
+# directly (no shim, so a workspace switch does not pay for starting a shell).
+# herdr rejects a duplicate action id whatever the platform, so each Windows
+# action carries a "-windows" suffix; events and startup have no id and are
+# simply declared once per platform set with item-level `platforms`.
+
+[[build]]
+platforms = ["windows"]
+command = ["cargo", "build", "--release", "--quiet"]
 
 # One-shot state maintenance after the server restores its session (and after a
 # live handoff): drops claims for worktrees that no longer exist and clears the
 # per-session focus cache. This used to run on every event invocation.
 [[startup]]
+platforms = ["linux", "macos"]
 command = ["sh", "bin/herdr-workspace-manager", "startup"]
+
+[[startup]]
+platforms = ["windows"]
+command = ["target/release/herdr-workspace-manager.exe", "startup"]
 
 # Fires for every new worktree. The handler matches the new worktree's checkout
 # path against the configured workspaces and, if a default layout is set, applies
 # it (creates the tabs/panes and runs their commands).
 [[events]]
 on = "worktree.created"
+platforms = ["linux", "macos"]
 command = ["sh", "bin/herdr-workspace-manager", "event"]
+
+[[events]]
+on = "worktree.created"
+platforms = ["windows"]
+command = ["target/release/herdr-workspace-manager.exe", "event"]
 
 # The herdr UI "new worktree" command has historically created the worktree
 # in-app and emitted NEITHER worktree.created nor workspace.created to plugins —
@@ -35,11 +56,23 @@ command = ["sh", "bin/herdr-workspace-manager", "event"]
 # "Is the workspace.focused hook still needed?" in the README.
 [[events]]
 on = "workspace.created"
+platforms = ["linux", "macos"]
+command = ["sh", "bin/herdr-workspace-manager", "event"]
+
+[[events]]
+on = "workspace.created"
+platforms = ["windows"]
+command = ["target/release/herdr-workspace-manager.exe", "event"]
+
+[[events]]
+on = "workspace.focused"
+platforms = ["linux", "macos"]
 command = ["sh", "bin/herdr-workspace-manager", "event"]
 
 [[events]]
 on = "workspace.focused"
-command = ["sh", "bin/herdr-workspace-manager", "event"]
+platforms = ["windows"]
+command = ["target/release/herdr-workspace-manager.exe", "event"]
 
 # Manually apply a layout to the current (or a target) workspace. With no
 # argument it applies the workspace's default layout; pass a layout id to force
@@ -48,13 +81,28 @@ command = ["sh", "bin/herdr-workspace-manager", "event"]
 id = "apply"
 title = "Apply workspace layout"
 contexts = ["workspace"]
+platforms = ["linux", "macos"]
 command = ["sh", "bin/herdr-workspace-manager", "apply"]
+
+[[actions]]
+id = "apply-windows"
+title = "Apply workspace layout"
+contexts = ["workspace"]
+platforms = ["windows"]
+command = ["target/release/herdr-workspace-manager.exe", "apply"]
 
 # Parse + validate the config file and print the resolved layouts/workspaces.
 [[actions]]
 id = "validate"
 title = "Validate workspace config"
+platforms = ["linux", "macos"]
 command = ["sh", "bin/herdr-workspace-manager", "validate"]
+
+[[actions]]
+id = "validate-windows"
+title = "Validate workspace config"
+platforms = ["windows"]
+command = ["target/release/herdr-workspace-manager.exe", "validate"]
 
 # Preview the current repo's linked worktrees whose remote branch was deleted
 # ("gone"). Removes nothing — worktrees that never pushed/tracked a remote are
@@ -66,7 +114,15 @@ command = ["sh", "bin/herdr-workspace-manager", "validate"]
 id = "remove-gone"
 title = "Remove gone worktrees (preview)"
 contexts = ["workspace"]
+platforms = ["linux", "macos"]
 command = ["sh", "bin/herdr-workspace-manager", "remove-gone", "--preview"]
+
+[[actions]]
+id = "remove-gone-windows"
+title = "Remove gone worktrees (preview)"
+contexts = ["workspace"]
+platforms = ["windows"]
+command = ["target/release/herdr-workspace-manager.exe", "remove-gone", "--preview"]
 
 [[keys.command]]
 key = "prefix+shift+l"

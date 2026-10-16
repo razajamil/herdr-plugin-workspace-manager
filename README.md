@@ -37,10 +37,11 @@ every new worktree into a declarative layout — and cleans up the ones you're d
 
 ## Install
 
-Requires **herdr ≥ 0.7.5**, **Linux or macOS**, and a **Rust toolchain**
+Requires **herdr ≥ 0.7.5**, **Linux, macOS or Windows**, and a **Rust toolchain**
 (`cargo`, [rustup.rs](https://rustup.rs)) on your `PATH`. The plugin compiles
 itself on first use — a one-off `cargo build --release` — and runs as a single
-native binary from then on, with no runtime dependencies at all.
+native binary from then on, with no runtime dependencies at all. (On Windows
+the build runs at install time instead; see [Windows](#windows).)
 
 ```sh
 herdr plugin install razajamil/herdr-plugin-workspace-manager
@@ -59,6 +60,34 @@ herdr plugin install razajamil/herdr-plugin-workspace-manager --ref <tag> --yes
 ```
 
 </details>
+
+### Windows
+
+The same plugin runs on Windows with herdr's named-pipe API, and layouts work as
+on Linux/macOS with these differences:
+
+- **Build.** The manifest runs `cargo build --release` at install. `herdr plugin
+  link` skips build steps, so for a linked checkout run it yourself once:
+  `cargo build --release`. There is no `sh` shim; herdr runs
+  `target/release/herdr-workspace-manager.exe` directly.
+- **Action ids carry a `-windows` suffix** (`apply-windows`, `validate-windows`,
+  `remove-gone-windows`), because herdr rejects duplicate ids whatever the
+  platform. To bind a key, point it at
+  `herdr-plugin-workspace-manager.apply-windows` in your `config.toml`.
+- **Pane commands are PowerShell**, not `sh`. Each runs in `powershell.exe` with
+  your profile loaded. A pane that runs a command and then hands back to a prompt
+  starts a nested `powershell.exe -NoLogo`, so the pane closes when you leave it.
+- **Setup lists** (`setup.command` as a list) run in order and stop at the first
+  failure, as `&&` does on Linux/macOS. Windows PowerShell 5.1 has no `&&`, so
+  the plugin nests the commands itself; write your own single commands for 5.1
+  (no `&&`/`||` inside one command, those need PowerShell 7). A command that
+  throws, or fails under `$ErrorActionPreference = 'Stop'`, is reported as a
+  failed setup instead of waiting for the timeout.
+- **Paths** in `repo`/`path` match case-insensitively and accept `\` or `/`;
+  `~` expands from `%USERPROFILE%`.
+- **Tested** by hand against herdr 0.9.5 on Windows 11 (layout apply, blocking
+  setup, setup failure codes, `remove-gone --dry-run`). The live integration
+  test in `tests/` is Unix only.
 
 ## Quick start
 

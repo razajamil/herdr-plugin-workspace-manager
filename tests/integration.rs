@@ -12,6 +12,10 @@
 //   - removes the worktree, closes the source workspace, deletes temp dirs
 //
 // Skips automatically when no herdr server is running.
+//
+// Unix only: the pane commands it drives are POSIX shell, and it runs against the
+// live herdr server, so it must not run unattended on a Windows machine.
+#![cfg(unix)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

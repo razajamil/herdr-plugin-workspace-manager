@@ -7,7 +7,7 @@ use std::time::UNIX_EPOCH;
 
 use serde_json::{json, Value};
 
-use crate::config::{resolve_path, Layout};
+use crate::config::{path_key, resolve_path, Layout};
 use crate::env::Env;
 use crate::herdr::run_herdr_json;
 use crate::plan::{build_plan, PlanContext};
@@ -130,7 +130,7 @@ pub fn get_worktree_branch(
         worktrees.iter().find(|w| {
             w.get("path")
                 .and_then(Value::as_str)
-                .is_some_and(|p| resolve_path(p) == resolve_path(checkout))
+                .is_some_and(|p| path_key(p) == path_key(checkout))
         })
     });
     let wt = by_workspace.or(by_path)?;
@@ -187,7 +187,7 @@ fn applied_dir(env: &Env) -> PathBuf {
 }
 
 fn claim_path(env: &Env, checkout_path: &str) -> PathBuf {
-    let key = sha1_smol::Sha1::from(resolve_path(checkout_path).as_bytes()).digest().to_string();
+    let key = sha1_smol::Sha1::from(path_key(checkout_path).as_bytes()).digest().to_string();
     applied_dir(env).join(key)
 }
 
@@ -483,7 +483,7 @@ mod tests {
 
     // The on-disk claim directory for a checkout path (mirrors claim keying).
     fn claim_dir(state: &Path, checkout: &str) -> PathBuf {
-        let key = sha1_smol::Sha1::from(resolve_path(checkout).as_bytes()).digest().to_string();
+        let key = sha1_smol::Sha1::from(path_key(checkout).as_bytes()).digest().to_string();
         state.join("applied").join(key)
     }
 

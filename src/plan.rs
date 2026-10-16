@@ -23,7 +23,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::{Agent, Direction, Layout, Pane, Size};
+use crate::config::{Agent, Direction, Layout, Pane, Setup, Size};
 
 pub const ROOT_TAB: &str = "t0";
 /// The worktree's existing root pane. Only named in tests today; the runner
@@ -106,6 +106,7 @@ pub struct PlanContext {
 // --- Shell wrapping ----------------------------------------------------------
 
 // Quote a script for embedding inside a single-quoted shell word.
+#[cfg(unix)]
 fn single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -118,6 +119,7 @@ fn single_quote(s: &str) -> String {
 // setup -- mise/asdf shims, nvm, aliases, PATH edits -- was already applied.
 // Launching the argv directly would silently drop all of it, and `npm run dev`
 // would stop resolving for anyone whose toolchain comes from a shell hook.
+#[cfg(unix)]
 fn shell_argv(script: &str) -> Vec<String> {
     // Fish shell uses different syntax ($status instead of $?), so we need to
     // detect it and handle it specially. We still want to run in the user's
@@ -133,8 +135,52 @@ fn shell_argv(script: &str) -> Vec<String> {
     ]
 }
 
+// Windows panes run PowerShell, so a layout's commands are PowerShell too. The
+// profile still loads (no -NoProfile), as the login shell does on Unix. The
+// script travels as -EncodedCommand, the base64 of its UTF-16LE text: the one
+// form that reaches PowerShell intact whatever quotes or newlines it holds,
+// because herdr rebuilds a single command line from this argv.
+//
+// The preamble keeps a failing command from ending the script early, the way a
+// `;`-joined sh script carries on: a profile that sets $ErrorActionPreference to
+// Stop is reset, and `trap ... continue` turns a terminating error (`throw`,
+// `-ErrorAction Stop`) into a printed message. After a trapped error `$?` is
+// $false for the next statement, so the setup status that follows still reads it
+// as a failure.
+#[cfg(windows)]
+const POWERSHELL_PREAMBLE: &str =
+    "$ErrorActionPreference = 'Continue'; trap { Write-Host $_.Exception.Message -ForegroundColor Red; continue }; ";
+
+#[cfg(windows)]
+fn shell_argv(script: &str) -> Vec<String> {
+    vec![
+        "powershell.exe".to_string(),
+        "-NoLogo".to_string(),
+        "-EncodedCommand".to_string(),
+        encode_command(&format!("{}{}", POWERSHELL_PREAMBLE, script)),
+    ]
+}
+
+#[cfg(windows)]
+fn encode_command(script: &str) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
 // Convert a POSIX shell script to fish syntax.
 // This is a minimal translation for the patterns used in this plugin.
+#[cfg(unix)]
 fn fish_script(script: &str) -> String {
     let mut result = script.replace("$?", "$status");
     // Fish doesn't support ${VAR:-default} syntax, use explicit fallback
@@ -149,14 +195,80 @@ fn fish_script(script: &str) -> String {
 // this shell inherits their exported environment. Re-running them would fire
 // login-only side effects a second time -- starting another ssh-agent, printing
 // another MOTD -- for a shell that gains nothing from it.
+#[cfg(unix)]
 const HAND_BACK: &str = "exec \"${SHELL:-/bin/sh}\" -i";
+
+// Windows has no `exec`: the nested PowerShell becomes the pane's prompt, and the
+// pane closes when the user leaves it.
+#[cfg(windows)]
+const HAND_BACK: &str = "powershell.exe -NoLogo";
 
 // Record the setup command's exit status where the runner can read it. Writing a
 // file is deliberate: the previous approach printed a sentinel and scraped it
 // back out of the terminal with `pane wait-output`, which depended on the marker
 // surviving in the last rendered rows and on the shell not echoing it early.
+#[cfg(unix)]
 fn record_status(status_path: &str) -> String {
     format!("printf '%s' \"$?\" > {}", single_quote(status_path))
+}
+
+// The code was already captured into $wsmCode by `setup_script`, right after the
+// command it belongs to, so a later statement cannot disturb it.
+#[cfg(windows)]
+fn record_status(status_path: &str) -> String {
+    format!("[System.IO.File]::WriteAllText({}, [string]$wsmCode)", powershell_quote(status_path))
+}
+
+// A PowerShell single-quoted string. PowerShell also treats the typographic single
+// quotes U+2018..U+201B as quote characters, so each is doubled like the ASCII one.
+#[cfg(windows)]
+fn powershell_quote(s: &str) -> String {
+    let mut out = String::from("'");
+    for c in s.chars() {
+        out.push(c);
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+// The setup commands as the script a pane runs.
+#[cfg(unix)]
+fn setup_script(setup: &Setup) -> String {
+    setup.script()
+}
+
+// Windows PowerShell 5.1 has no `&&`, so a list of commands is nested instead:
+// each one runs only if the one before it succeeded, and the exit code is captured
+// into $wsmCode right after every command, the same code a `&&` chain would leave.
+// A native command's code is $LASTEXITCODE; a cmdlet that fails sets none, so it
+// counts as 1.
+#[cfg(windows)]
+fn setup_script(setup: &Setup) -> String {
+    const CAPTURE: &str = "$wsmOk = $?; $wsmCode = if ($wsmOk) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }";
+    let mut script = String::new();
+    for (i, command) in setup.command.iter().enumerate() {
+        if i > 0 {
+            script.push_str("; if ($wsmOk) { ");
+        }
+        script.push_str(command);
+        script.push_str("; ");
+        script.push_str(CAPTURE);
+    }
+    script.push_str(&" }".repeat(setup.command.len().saturating_sub(1)));
+    script
+}
+
+// The status line for a setup command, or None when there is nowhere to write it.
+// Unix discards it into /dev/null; Windows has no safe equivalent, so it skips it.
+fn record_status_or_discard(status_path: Option<&str>) -> Option<String> {
+    match status_path {
+        Some(path) => Some(record_status(path)),
+        None if cfg!(windows) => None,
+        None => Some(record_status("/dev/null")),
+    }
 }
 
 // The script a pane runs, or None for a plain shell pane.
@@ -165,7 +277,7 @@ fn pane_script(pane: &Pane, setup: Option<&str>, status_path: Option<&str>) -> O
     if let Some(setup) = setup {
         parts.push(setup.to_string());
         // `$?` has to be captured immediately after the setup command.
-        parts.push(record_status(status_path.unwrap_or("/dev/null")));
+        parts.extend(record_status_or_discard(status_path));
     }
     if let Some(command) = &pane.command {
         parts.push(command.clone());
@@ -255,8 +367,8 @@ pub fn build_plan(layout: &Layout, ctx: &PlanContext) -> Plan {
     // Without a known tab area, treat every region as unmeasurable: percentages
     // still work (they're relative), and a cell size falls back to an even split.
     let area = ctx.area.unwrap_or((0.0, 0.0));
-    let setup_script = layout.setup.as_ref().map(|s| s.script());
-    let setup_command = setup_script.as_deref();
+    let setup_text = layout.setup.as_ref().map(setup_script);
+    let setup_command = setup_text.as_deref();
 
     let tabs = layout
         .tabs
@@ -390,9 +502,37 @@ mod tests {
         validate_config(&parse_yaml(text).unwrap()).unwrap()
     }
 
+    // The script the pane actually runs, unwrapped from its PowerShell argv.
+    #[cfg(windows)]
+    fn inner_script(spec: &PaneSpec) -> String {
+        let argv = spec.command.as_ref().expect("pane has a command");
+        assert_eq!(argv[0], "powershell.exe");
+        assert_eq!(argv[2], "-EncodedCommand");
+        let full = decode_command(&argv[3]);
+        full.strip_prefix(POWERSHELL_PREAMBLE).expect("script starts with the preamble").to_string()
+    }
+
+    // Inverse of `encode_command`: base64 of UTF-16LE text back to a string.
+    #[cfg(windows)]
+    fn decode_command(encoded: &str) -> String {
+        let value = |c: char| "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".find(c);
+        let mut bytes = Vec::new();
+        let digits: Vec<usize> = encoded.chars().filter(|c| *c != '=').map(|c| value(c).expect("base64")).collect();
+        for group in digits.chunks(4) {
+            let n = group.iter().enumerate().fold(0u32, |acc, (i, d)| acc | ((*d as u32) << (18 - 6 * i)));
+            let produced = group.len() * 6 / 8;
+            for k in 0..produced {
+                bytes.push((n >> (16 - 8 * k)) as u8);
+            }
+        }
+        let units: Vec<u16> = bytes.chunks(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+        String::from_utf16(&units).expect("utf-16")
+    }
+
     // The script the pane actually runs, unwrapped from its login-shell argv.
     // The wrapper now uses a case statement to detect fish shell, so we need
     // to extract the script from either the fish or POSIX branch.
+    #[cfg(unix)]
     fn inner_script(spec: &PaneSpec) -> String {
         let argv = spec.command.as_ref().expect("pane has a command");
         assert_eq!(argv[0], "sh");
@@ -787,6 +927,7 @@ mod tests {
         assert_eq!(handles_in_tree_order(&plan.tabs[0].root), vec![ROOT_PANE]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn single_quoting_survives_a_command_containing_quotes() {
         let script = "echo 'it''s fine'";
@@ -796,6 +937,71 @@ mod tests {
         // The wrapper now uses a case statement to detect fish shell
         assert!(argv[2].starts_with("shell=\"${SHELL:-/bin/sh}\"; case \"$shell\" in */fish)"));
         assert!(argv[2].ends_with("esac"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_encoded_script_round_trips_quotes_newlines_and_non_ascii() {
+        let script = "Write-Host \"it's fine\"\r\n  echo 'ação' # 日本語 😀";
+        let argv = shell_argv(script);
+        assert_eq!(&argv[..3], ["powershell.exe", "-NoLogo", "-EncodedCommand"]);
+        assert_eq!(decode_command(&argv[3]), format!("{}{}", POWERSHELL_PREAMBLE, script));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn encode_command_matches_a_known_base64_vector() {
+        // "dir" in UTF-16LE is 64 00 69 00 72 00 -> ZABpAHIA
+        assert_eq!(encode_command("dir"), "ZABpAHIA");
+        // A length that needs padding: "a" is 61 00 -> YQA=
+        assert_eq!(encode_command("a"), "YQA=");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_status_line_writes_the_captured_code_and_quotes_the_path() {
+        let line = record_status(r"C:\Users\o'neil\state\setup.status");
+        assert_eq!(
+            line,
+            r"[System.IO.File]::WriteAllText('C:\Users\o''neil\state\setup.status', [string]$wsmCode)"
+        );
+        assert_eq!(record_status_or_discard(None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn typographic_single_quotes_in_the_path_are_doubled_too() {
+        // PowerShell ends a single-quoted string at U+2018..U+201B as well as at '.
+        let quoted = powershell_quote("C:\\Users\\O\u{2019}Brien\\it\u{2018}s\\x");
+        assert_eq!(quoted, "'C:\\Users\\O\u{2019}\u{2019}Brien\\it\u{2018}\u{2018}s\\x'");
+    }
+
+    #[cfg(windows)]
+    fn setup_of(commands: &[&str]) -> Setup {
+        Setup { command: commands.iter().map(|c| c.to_string()).collect(), blocking: true }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_setup_list_is_nested_instead_of_joined_with_and_and() {
+        // Windows PowerShell 5.1 has no `&&`: each command runs under the success of
+        // the one before it, and the code is captured after every command.
+        let script = setup_script(&setup_of(&["npm ci", "npm run build"]));
+        assert!(!script.contains("&&"), "{}", script);
+        assert!(script.starts_with("npm ci; $wsmOk = $?;"), "{}", script);
+        assert!(script.contains("; if ($wsmOk) { npm run build; $wsmOk = $?;"), "{}", script);
+        assert!(script.ends_with(" }"), "{}", script);
+        assert_eq!(script.matches('{').count(), script.matches('}').count(), "{}", script);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_single_setup_command_is_captured_without_a_wrapper_block() {
+        let script = setup_script(&setup_of(&["npm ci"]));
+        assert_eq!(
+            script,
+            "npm ci; $wsmOk = $?; $wsmCode = if ($wsmOk) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }"
+        );
     }
 
     #[test]

@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- Windows support. The herdr API connector uses the named pipe
+  (`\\.\pipe\<HERDR_SOCKET_PATH>`) instead of a Unix socket; pane commands run in
+  PowerShell via `-EncodedCommand`; the setup exit status is recorded by a
+  PowerShell snippet; workspace/repo path matching normalises separators, case
+  and the `\\?\` prefix; `~` expands from `%USERPROFILE%`. The manifest declares
+  Windows entries with item-level `platforms` and `-windows` action ids, plus a
+  `cargo build --release` build step. The live integration test stays Unix only.
+- Linux and macOS behaviour is unchanged.
+
 ## [0.8.0] - 2026-08-23
 
 - New root-level `globalLayout` field: names a `layouts[].id` to use as the
