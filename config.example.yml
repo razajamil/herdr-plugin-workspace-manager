@@ -28,10 +28,11 @@
 #   40      -> fixed 40 cells (columns/rows)
 #   "30%"   -> 30% of the space being split
 #   0.3     -> a fraction, same as "30%"
-# A fixed cell size is converted against the tab's cell area; on a later window
-# resize herdr rebalances proportionally. (The legacy `ratio` field still works
-# but is the inverse -- the fraction the PREVIOUS pane keeps -- so prefer `size`.
-# A pane can't set both.)
+# A fixed cell size is converted against the region of the pane being split
+# (worked out from the tab's cell area); on a later window resize herdr
+# rebalances proportionally. (The legacy `ratio` field still works but is the
+# inverse -- the fraction the PREVIOUS pane (or the `splitFrom` pane) keeps --
+# so prefer `size`. A pane can't set both.)
 #
 # pane.command: runs in YOUR interactive login shell, so .zshrc/.bash_profile
 #   setup (mise, asdf, nvm, aliases, PATH) applies. When it exits you're left at

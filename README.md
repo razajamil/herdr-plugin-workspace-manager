@@ -233,7 +233,7 @@ lives in [`config.example.yml`](./config.example.yml).
 | `panes[].split` | pane | For panes after the first: `vertical` \| `horizontal` \| `right` \| `down`. |
 | `panes[].splitFrom` | pane | For panes after the first: the `title` of an **earlier** pane in the same tab to split instead of the previous one. See [Splitting an earlier pane](#splitting-an-earlier-pane). |
 | `panes[].size` | pane | Optional size of **this** pane along the split axis: fixed cells (`40`), a fraction (`0.3`), or a percentage (`"30%"`). See [Pane sizing](#pane-sizing). |
-| `panes[].ratio` | pane | Legacy split ratio `(0, 1)` — the fraction the **previous** pane keeps. Prefer `size` (mutually exclusive with it). |
+| `panes[].ratio` | pane | Legacy split ratio `(0, 1)` — the fraction the **previous** pane (or the `splitFrom` pane) keeps. Prefer `size` (mutually exclusive with it). |
 | `workspaces[].repo` | workspace | **Recommended.** Repo root (`~` expanded) or bare repo name. Matches any *linked worktree* of that repo; the main checkout is never touched. |
 | `workspaces[].path` | workspace | Alternative: prefix-match the worktree's checkout path. |
 | `workspaces[].defaultLayout` | workspace | Layout id applied to a matching new worktree when no `layoutMatching` rule matches its branch. |
@@ -352,15 +352,16 @@ panes:
 ```
 
 A percentage/fraction is applied directly. A **fixed** cell size is converted to
-a ratio against the tab's cell area, which the plugin queries once per apply —
-so it lands on ~N cells when the layout is built; if you later resize the
+a ratio against the region of the pane being split, worked out from the tab's
+cell area (which the plugin queries once per apply) — so it lands on ~N cells when the layout is built; if you later resize the
 window, herdr rebalances the panes proportionally (the plugin doesn't manage
 them afterwards). A fixed size larger than the available space is clamped so
 both panes stay visible.
 
 `size` refers to the pane you put it on. The older `ratio` field is the
-opposite — it's herdr's raw ratio, the fraction the **previous** pane keeps —
-so `ratio: 0.3` makes the previous pane 30% and *this* pane 70%. `ratio` still
+opposite — it's herdr's raw ratio, the fraction the **previous** pane (or the
+`splitFrom` pane) keeps — so `ratio: 0.3` makes that pane 30% and *this* pane
+70%. `ratio` still
 works but a pane can't set both; prefer `size`.
 
 ### Commands and the shell

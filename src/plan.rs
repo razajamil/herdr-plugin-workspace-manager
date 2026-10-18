@@ -956,30 +956,30 @@ mod tests {
         parse(
             &[
                 "layouts:",
-                "  - id: heard-ts-main",
+                "  - id: columns",
                 "    tabs:",
                 "      - title: code",
                 "        panes:",
                 "          - title: editor",
-                "            command: ttt",
+                "            command: nvim",
                 "          - title: agent",
                 "            agent: claude",
                 "            split: vertical",
                 "            size: \"70%\"",
-                "          - title: skill timeline",
-                "            command: herdr-skill-timeline",
+                "          - title: monitor",
+                "            command: htop",
                 "            split: vertical",
                 "            size: \"45%\"",
-                "          - title: notes",
-                "            command: micro",
+                "          - title: system",
+                "            command: btop",
                 "            split: vertical",
                 "            size: \"50%\"",
                 "          - title: terminal",
                 "            split: horizontal",
                 "            size: \"50%\"",
-                "          - title: pr pulse",
-                "            command: herdr-pr-pulse workspace",
-                "            splitFrom: skill timeline",
+                "          - title: git",
+                "            command: lazygit",
+                "            splitFrom: monitor",
                 "            split: horizontal",
                 "            size: \"50%\"",
             ]
@@ -990,13 +990,13 @@ mod tests {
     #[test]
     fn split_from_splits_the_named_earlier_pane_instead_of_the_previous_one() {
         let config = motivating_config();
-        let plan = plan_of(&config, "heard-ts-main", &ctx(None));
+        let plan = plan_of(&config, "columns", &ctx(None));
         let root = &plan.tabs[0].root;
-        // agent | [timeline / pr pulse] | [notes / terminal], beside the editor.
+        // agent | [monitor / git] | [system / terminal], beside the editor.
         assert_eq!(
             shape(root),
             "right(0.30, editor, right(0.55, agent, right(0.50, \
-             down(0.50, skill timeline, pr pulse), down(0.50, notes, terminal))))"
+             down(0.50, monitor, git), down(0.50, system, terminal))))"
         );
 
         // Ratios straight from split_ratio_arg: a percent size p leaves the
@@ -1006,15 +1006,15 @@ mod tests {
         assert!((ratio_of(root) - 0.3).abs() < 1e-9);
         let (_agent, rest2) = children(rest);
         assert!((ratio_of(rest) - 0.55).abs() < 1e-9);
-        let (timeline_col, notes_col) = children(rest2);
+        let (monitor_col, system_col) = children(rest2);
         assert_eq!(ratio_of(rest2), 0.5);
-        assert_eq!(ratio_of(timeline_col), 0.5);
-        assert_eq!(ratio_of(notes_col), 0.5);
+        assert_eq!(ratio_of(monitor_col), 0.5);
+        assert_eq!(ratio_of(system_col), 0.5);
 
-        // Handles stay list-indexed; tree order puts pr pulse (t0p5) right after
-        // the timeline it split, which is the order herdr echoes pane ids in.
+        // Handles stay list-indexed; tree order puts git (t0p5) right after
+        // the monitor it split, which is the order herdr echoes pane ids in.
         assert_eq!(handles_in_tree_order(root), vec!["t0p0", "t0p1", "t0p2", "t0p5", "t0p3", "t0p4"]);
-        assert_eq!(pane_of(root, "t0p5").title.as_deref(), Some("pr pulse"));
+        assert_eq!(pane_of(root, "t0p5").title.as_deref(), Some("git"));
         assert_eq!(plan.agents.len(), 1);
         assert_eq!(plan.agents[0].handle, "t0p1");
     }
