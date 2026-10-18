@@ -231,6 +231,7 @@ lives in [`config.example.yml`](./config.example.yml).
 | `panes[].promptTimeoutMs` | pane | Setting it makes the apply wait for the agent to settle after `prompt`. Omit to submit and move on. |
 | `panes[].setup` | pane | Marks the single pane that runs `setup.command` (at most one per layout). |
 | `panes[].split` | pane | For panes after the first: `vertical` \| `horizontal` \| `right` \| `down`. |
+| `panes[].splitFrom` | pane | For panes after the first: the `title` of an **earlier** pane in the same tab to split instead of the previous one. See [Splitting an earlier pane](#splitting-an-earlier-pane). |
 | `panes[].size` | pane | Optional size of **this** pane along the split axis: fixed cells (`40`), a fraction (`0.3`), or a percentage (`"30%"`). See [Pane sizing](#pane-sizing). |
 | `panes[].ratio` | pane | Legacy split ratio `(0, 1)` — the fraction the **previous** pane keeps. Prefer `size` (mutually exclusive with it). |
 | `workspaces[].repo` | workspace | **Recommended.** Repo root (`~` expanded) or bare repo name. Matches any *linked worktree* of that repo; the main checkout is never touched. |
@@ -287,7 +288,45 @@ configure more than one global default.
 herdr splits are `right` or `down`. This plugin maps `vertical → right` (side
 by side) and `horizontal → down` (stacked); `right`/`down` are also accepted.
 The first pane of a tab is never split; each later pane splits from the
-previous one.
+previous one, unless it names an earlier pane with `splitFrom`.
+
+### Splitting an earlier pane
+
+Panes are listed in the order they're split, so on its own a list can only keep
+dividing the newest pane. `splitFrom: <title>` makes a pane split the earlier
+pane with that `title` instead — here `pr pulse` goes back to the timeline
+column after `notes`/`terminal` have been split off it, giving
+`editor | agent | [timeline / pr pulse] | [notes / terminal]`:
+
+```yaml
+panes:
+  - title: editor
+    command: ttt
+  - title: agent
+    agent: claude
+    split: vertical
+    size: "70%"
+  - title: skill timeline
+    command: herdr-skill-timeline
+    split: vertical
+    size: "45%"
+  - title: notes
+    command: micro
+    split: vertical
+    size: "50%"
+  - title: terminal
+    split: horizontal
+    size: "50%"
+  - title: pr pulse
+    command: herdr-pr-pulse workspace
+    splitFrom: skill timeline
+    split: horizontal
+    size: "50%"     # half of the timeline's column
+```
+
+`split` and `size` apply to the named pane's space as it is at that point. The
+title must match exactly one pane listed **before** this one in the same tab;
+`splitFrom` can't be set on a tab's first pane.
 
 ### Pane sizing
 

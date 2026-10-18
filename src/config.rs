@@ -116,6 +116,9 @@ pub struct Pane {
     pub env: BTreeMap<String, String>,
     pub setup: bool,
     pub split: Option<Direction>,
+    /// The `title` of an earlier pane in the same tab to split, instead of the
+    /// previous pane. Checked against the tab's panes in `normalize_tab`.
+    pub split_from: Option<String>,
     pub ratio: Option<f64>,
     pub size: Option<Size>,
 }
@@ -536,6 +539,9 @@ fn normalize_pane(raw: &Value, layout_id: &str, tab_title: &str, index: usize) -
         env: normalize_env(opt(raw, "env"), &where_)?,
         setup: raw.get("setup").map(truthy).unwrap_or(false),
         split: None,
+        split_from: opt(raw, "splitFrom")
+            .map(|v| as_string(Some(v), &format!("{}: splitFrom", where_)))
+            .transpose()?,
         ratio: None,
         size: None,
     };
@@ -598,7 +604,43 @@ fn normalize_tab(raw: &Value, layout_id: &str, index: usize) -> Result<Tab, Stri
         .enumerate()
         .map(|(i, p)| normalize_pane(p, layout_id, &tab_label, i))
         .collect::<Result<Vec<_>, _>>()?;
+    for i in 0..panes.len() {
+        check_split_from(&panes, i, &format!("layout \"{}\", tab \"{}\", pane {}", layout_id, tab_label, i))?;
+    }
     Ok(Tab { title, panes })
+}
+
+// A pane's `splitFrom` must name exactly one EARLIER pane in its tab by title:
+// the planner builds the tree in list order, so only a pane that already exists
+// can be split. Later panes and the pane itself are checked only to say why.
+fn check_split_from(panes: &[Pane], index: usize, where_: &str) -> Result<(), String> {
+    let Some(target) = &panes[index].split_from else { return Ok(()) };
+    if index == 0 {
+        return Err(format!(
+            "{}: splitFrom is not allowed on the first pane (it is the tab's root, nothing to split)",
+            where_
+        ));
+    }
+    let titled = |p: &Pane| p.title.as_deref() == Some(target.as_str());
+    let earlier: Vec<usize> = (0..index).filter(|&i| titled(&panes[i])).collect();
+    match earlier.as_slice() {
+        [_] => Ok(()),
+        [] if titled(&panes[index]) => Err(format!(
+            "{}: splitFrom \"{}\" names this pane itself; it must name an earlier pane",
+            where_, target
+        )),
+        [] => match (index + 1..panes.len()).find(|&i| titled(&panes[i])) {
+            Some(later) => Err(format!(
+                "{}: splitFrom \"{}\" names a later pane (pane {}); it must name an earlier pane",
+                where_, target, later
+            )),
+            None => Err(format!("{}: splitFrom \"{}\" matches no earlier pane title", where_, target)),
+        },
+        [first, second, ..] => Err(format!(
+            "{}: splitFrom \"{}\" is ambiguous: panes {} and {} are both titled \"{}\"",
+            where_, target, first, second, target
+        )),
+    }
 }
 
 fn normalize_layout(raw: &Value, index: usize) -> Result<Layout, String> {
@@ -1002,6 +1044,113 @@ mod tests {
         assert!(validate_config(&parse_yaml(&sized("40.5")).unwrap()).is_err()); // fixed cells must be whole
         assert!(validate_config(&parse_yaml(&sized("0")).unwrap()).is_err());
         assert!(validate_config(&parse_yaml(&sized("\"wide\"")).unwrap()).is_err());
+    }
+
+    // --- splitFrom ----------------------------------------------------------
+
+    // A one-tab layout whose pane lines (already indented) follow `panes:`.
+    fn panes_cfg(panes: &[&str]) -> String {
+        let mut lines = vec!["layouts:", "  - id: x", "    tabs:", "      - title: t", "        panes:"];
+        lines.extend_from_slice(panes);
+        lines.join("\n")
+    }
+
+    #[test]
+    fn split_from_names_an_earlier_pane_by_title() {
+        let config = parse(&panes_cfg(&[
+            "          - title: a",
+            "          - title: b",
+            "            split: vertical",
+            "          - title: c",
+            "            splitFrom: a",
+            "            split: horizontal",
+        ]));
+        let panes = &config.layouts[0].tabs[0].panes;
+        assert_eq!(panes[0].split_from, None);
+        assert_eq!(panes[1].split_from, None);
+        assert_eq!(panes[2].split_from.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn split_from_may_share_this_panes_title_when_an_earlier_pane_has_it() {
+        // Only earlier panes are candidates, so this names pane 0, not itself.
+        let config = parse(&panes_cfg(&[
+            "          - title: a",
+            "          - title: b",
+            "          - title: a",
+            "            splitFrom: a",
+        ]));
+        assert_eq!(config.layouts[0].tabs[0].panes[2].split_from.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn rejects_split_from_on_the_first_pane() {
+        let err = parse_err(&panes_cfg(&["          - title: a", "            splitFrom: a"]));
+        assert!(err.contains("layout \"x\", tab \"t\", pane 0"), "{}", err);
+        assert!(err.contains("not allowed on the first pane"), "{}", err);
+    }
+
+    #[test]
+    fn rejects_split_from_naming_no_pane() {
+        let err = parse_err(&panes_cfg(&[
+            "          - title: a",
+            "          - title: b",
+            "            splitFrom: nope",
+        ]));
+        assert!(err.contains("layout \"x\", tab \"t\", pane 1"), "{}", err);
+        assert!(err.contains("splitFrom \"nope\" matches no earlier pane title"), "{}", err);
+    }
+
+    #[test]
+    fn rejects_split_from_naming_the_pane_itself() {
+        let err = parse_err(&panes_cfg(&[
+            "          - title: a",
+            "          - title: b",
+            "            splitFrom: b",
+        ]));
+        assert!(err.contains("splitFrom \"b\" names this pane itself"), "{}", err);
+    }
+
+    #[test]
+    fn rejects_split_from_naming_a_later_pane() {
+        let err = parse_err(&panes_cfg(&[
+            "          - title: a",
+            "          - title: b",
+            "            splitFrom: c",
+            "          - title: c",
+        ]));
+        assert!(err.contains("pane 1"), "{}", err);
+        assert!(err.contains("splitFrom \"c\" names a later pane (pane 2)"), "{}", err);
+    }
+
+    #[test]
+    fn rejects_split_from_when_two_earlier_panes_share_the_title() {
+        let err = parse_err(&panes_cfg(&[
+            "          - title: a",
+            "          - title: a",
+            "          - title: c",
+            "            splitFrom: a",
+        ]));
+        assert!(err.contains("pane 2"), "{}", err);
+        assert!(err.contains("splitFrom \"a\" is ambiguous: panes 0 and 1 are both titled \"a\""), "{}", err);
+    }
+
+    #[test]
+    fn rejects_a_split_from_that_is_not_a_non_empty_string() {
+        // The plugin's YAML has no flow sequences, so a list is spelled as a block.
+        for value in ["\"\"", "\"  \"", "3", "true", "\n              - a"] {
+            let err = parse_err(&panes_cfg(&[
+                "          - title: a",
+                "          - title: b",
+                &format!("            splitFrom: {}", value),
+            ]));
+            assert!(
+                err.contains("layout \"x\", tab \"t\", pane 1: splitFrom must be a non-empty string"),
+                "{}: {}",
+                value,
+                err
+            );
+        }
     }
 
     // --- env / persist / agent fields ---------------------------------------

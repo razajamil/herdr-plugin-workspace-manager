@@ -15,7 +15,8 @@
 #   - The FIRST tab replaces the worktree's existing tab.
 #   - Each later tab is appended to the workspace.
 #   - The FIRST pane of a tab is that tab's root pane; each later pane splits
-#     from the previous pane in the same tab.
+#     from the previous pane in the same tab -- or, with `splitFrom: <title>`,
+#     from the EARLIER pane with that title (see the `columns` layout below).
 #
 # pane.split direction:
 #   vertical   -> panes side by side       (herdr --direction right)  [default]
@@ -129,6 +130,37 @@ layouts:
             command: nvim
           - title: shell
             split: vertical
+
+  # splitFrom: agent | [timeline / pr pulse] | [notes / terminal]. Panes are
+  # listed in the order they're split; "pr pulse" goes back and splits
+  # "skill timeline" (by title) instead of the pane just before it, and its
+  # split/size apply to the timeline's column.
+  - id: columns
+    tabs:
+      - title: code
+        panes:
+          - title: editor
+            command: ttt
+          - title: agent
+            agent: claude
+            split: vertical
+            size: "70%"
+          - title: skill timeline
+            command: herdr-skill-timeline
+            split: vertical
+            size: "45%"
+          - title: notes
+            command: micro
+            split: vertical
+            size: "50%"
+          - title: terminal
+            split: horizontal
+            size: "50%"
+          - title: pr pulse
+            command: herdr-pr-pulse workspace
+            splitFrom: skill timeline
+            split: horizontal
+            size: "50%"
 
 # ---------------------------------------------------------------------------
 # workspaces: map a repo (or a worktree directory) to a layout.

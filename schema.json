@@ -154,7 +154,12 @@
         },
         "split": {
           "enum": ["vertical", "horizontal", "right", "down"],
-          "description": "For panes after the first: split direction relative to the previous pane. vertical=side by side (right), horizontal=stacked (down)."
+          "description": "For panes after the first: split direction relative to the previous pane (or the `splitFrom` pane). vertical=side by side (right), horizontal=stacked (down)."
+        },
+        "splitFrom": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For panes after the first: the `title` of an EARLIER pane in the same tab to split, instead of the previous pane. It must match exactly one earlier pane. `split` and `size` apply to that pane's current space."
         },
         "ratio": {
           "type": "number",

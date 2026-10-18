@@ -652,6 +652,58 @@ mod tests {
     }
 
     #[test]
+    fn a_split_from_layout_zips_echoed_pane_ids_onto_the_right_handles() {
+        let config = validate_config(
+            &parse_yaml(
+                &[
+                    "layouts:",
+                    "  - id: x",
+                    "    tabs:",
+                    "      - title: t",
+                    "        panes:",
+                    "          - title: a",
+                    "          - title: b",
+                    "            split: vertical",
+                    "          - title: c",
+                    "            split: vertical",
+                    "          - title: d",
+                    "            splitFrom: b",
+                    "            split: horizontal",
+                ]
+                .join("\n"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let plan = build_plan(find_layout(&config, "x").unwrap(), &PlanContext::default());
+        let root = &plan.tabs[0].root;
+        // d is listed last but sits next to b in the tree.
+        let planned = handles_in_tree_order(root);
+        assert_eq!(planned, vec!["t0p0", "t0p1", "t0p3", "t0p2"]);
+
+        // herdr echoes the tree we sent with ids filled in. Stand in for it by
+        // giving each request leaf an id derived from its label, then zip.
+        fn echo(node: &Value) -> Value {
+            match node["type"].as_str() {
+                Some("pane") => json!({ "type": "pane", "pane_id": format!("id-{}", node["label"].as_str().unwrap()) }),
+                _ => json!({ "type": "split", "first": echo(&node["first"]), "second": echo(&node["second"]) }),
+            }
+        }
+        let mut ids = Vec::new();
+        response_pane_ids(&echo(&node_json(root)), &mut ids).unwrap();
+        let zipped: Vec<(&str, String)> = planned.into_iter().zip(ids).collect();
+        assert_eq!(
+            zipped,
+            vec![
+                ("t0p0", "id-a".to_string()),
+                ("t0p1", "id-b".to_string()),
+                ("t0p3", "id-d".to_string()),
+                ("t0p2", "id-c".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn derived_agent_names_are_valid_stable_and_deduplicated() {
         let none: Vec<String> = Vec::new();
         assert_eq!(derive_agent_name("claude", "w5R", &none), "claude-w5r");
