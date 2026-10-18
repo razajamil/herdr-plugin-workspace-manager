@@ -131,34 +131,34 @@ layouts:
           - title: shell
             split: vertical
 
-  # splitFrom: agent | [timeline / pr pulse] | [notes / terminal]. Panes are
-  # listed in the order they're split; "pr pulse" goes back and splits
-  # "skill timeline" (by title) instead of the pane just before it, and its
-  # split/size apply to the timeline's column.
+  # splitFrom: editor | agent | [monitor / git] | [system / terminal]. Panes
+  # are listed in the order they're split; "git" goes back and splits
+  # "monitor" (by title) instead of the pane just before it, and its
+  # split/size apply to the monitor's column.
   - id: columns
     tabs:
       - title: code
         panes:
           - title: editor
-            command: ttt
+            command: nvim
           - title: agent
             agent: claude
             split: vertical
             size: "70%"
-          - title: skill timeline
-            command: herdr-skill-timeline
+          - title: monitor
+            command: htop
             split: vertical
             size: "45%"
-          - title: notes
-            command: micro
+          - title: system
+            command: btop
             split: vertical
             size: "50%"
           - title: terminal
             split: horizontal
             size: "50%"
-          - title: pr pulse
-            command: herdr-pr-pulse workspace
-            splitFrom: skill timeline
+          - title: git
+            command: lazygit
+            splitFrom: monitor
             split: horizontal
             size: "50%"
 

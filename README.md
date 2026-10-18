@@ -294,34 +294,34 @@ previous one, unless it names an earlier pane with `splitFrom`.
 
 Panes are listed in the order they're split, so on its own a list can only keep
 dividing the newest pane. `splitFrom: <title>` makes a pane split the earlier
-pane with that `title` instead — here `pr pulse` goes back to the timeline
-column after `notes`/`terminal` have been split off it, giving
-`editor | agent | [timeline / pr pulse] | [notes / terminal]`:
+pane with that `title` instead — here `git` goes back to the `monitor`
+column after `system`/`terminal` have been split off it, giving
+`editor | agent | [monitor / git] | [system / terminal]`:
 
 ```yaml
 panes:
   - title: editor
-    command: ttt
+    command: nvim
   - title: agent
     agent: claude
     split: vertical
     size: "70%"
-  - title: skill timeline
-    command: herdr-skill-timeline
+  - title: monitor
+    command: htop
     split: vertical
     size: "45%"
-  - title: notes
-    command: micro
+  - title: system
+    command: btop
     split: vertical
     size: "50%"
   - title: terminal
     split: horizontal
     size: "50%"
-  - title: pr pulse
-    command: herdr-pr-pulse workspace
-    splitFrom: skill timeline
+  - title: git
+    command: lazygit
+    splitFrom: monitor
     split: horizontal
-    size: "50%"     # half of the timeline's column
+    size: "50%"     # half of the monitor's column
 ```
 
 `split` and `size` apply to the named pane's space as it is at that point. The

@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 - New per-pane `splitFrom: <title>`: the pane splits the EARLIER pane in the
   same tab with that title instead of the previous pane, so layouts like
-  `agent | [timeline / pr pulse] | [notes / terminal]` can be expressed. Its
+  `agent | [monitor / git] | [system / terminal]` can be expressed. Its
   `split`/`size` apply to the named pane's space at that point. The title must
   match exactly one earlier pane, and the first pane can't set it. Layouts
   without `splitFrom` build exactly the same tree as before.
