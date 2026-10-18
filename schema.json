@@ -154,16 +154,21 @@
         },
         "split": {
           "enum": ["vertical", "horizontal", "right", "down"],
-          "description": "For panes after the first: split direction relative to the previous pane. vertical=side by side (right), horizontal=stacked (down)."
+          "description": "For panes after the first: split direction relative to the previous pane (or the `splitFrom` pane). vertical=side by side (right), horizontal=stacked (down)."
+        },
+        "splitFrom": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For panes after the first: the `title` of an EARLIER pane in the same tab to split, instead of the previous pane. It must match exactly one earlier pane. `split` and `size` apply to that pane's current space."
         },
         "ratio": {
           "type": "number",
           "exclusiveMinimum": 0,
           "exclusiveMaximum": 1,
-          "description": "Legacy split ratio between 0 and 1: the fraction of the split the PREVIOUS pane keeps (this pane gets the rest). Prefer `size`, which sizes this pane directly. Mutually exclusive with `size`."
+          "description": "Legacy split ratio between 0 and 1: the fraction of the split the PREVIOUS pane (or the `splitFrom` pane) keeps (this pane gets the rest). Prefer `size`, which sizes this pane directly. Mutually exclusive with `size`."
         },
         "size": {
-          "description": "Size of THIS pane along the split axis (columns for a vertical/right split, rows for a horizontal/down split). A whole number is fixed cells (e.g. 40); a number between 0 and 1 is a fraction (0.3 = 30%); a string like \"30%\" is a percentage. Fixed cell sizes are converted to a ratio against the tab's cell area. Mutually exclusive with `ratio`.",
+          "description": "Size of THIS pane along the split axis (columns for a vertical/right split, rows for a horizontal/down split). A whole number is fixed cells (e.g. 40); a number between 0 and 1 is a fraction (0.3 = 30%); a string like \"30%\" is a percentage. Fixed cell sizes are converted to a ratio against the region of the pane being split, derived from the tab's cell area. Mutually exclusive with `ratio`.",
           "anyOf": [
             { "type": "number", "exclusiveMinimum": 0 },
             { "type": "string", "pattern": "^\\s*\\d+(\\.\\d+)?\\s*%\\s*$" }

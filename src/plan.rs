@@ -6,12 +6,19 @@
 // single request instead of walking the layout with `pane split` / `pane rename`
 // / `pane run`, so a whole tab is built in one server-side operation.
 //
-// The config's per-tab pane list stays linear -- pane 0 is the tab's root pane
-// and each later pane splits off the pane before it -- which maps onto a
+// The config's per-tab pane list is linear -- pane 0 is the tab's root pane and,
+// by default, each later pane splits off the pane before it -- which maps onto a
 // right-nested tree: splitting pane j replaces the *leaf* j with a split whose
 // first child is pane j and whose second child is everything after it.
 //
 //   panes [a, b(right), c(down)]  ->  split(right, a, split(down, b, c))
+//
+// A pane's `splitFrom: <title>` makes it split that earlier pane's leaf instead
+// of the previous pane's, so the tree is built incrementally rather than by
+// recursion; tree order can then differ from list order:
+//
+//   panes [a, b(right), c(right), d(down, splitFrom b)]
+//     ->  split(right, a, split(right, split(down, b, d), c))
 //
 // Handles:
 //   tab  ti  -> "t0", "t1", ...      ("t0" is the worktree's existing root tab)
@@ -217,37 +224,72 @@ fn leaf(ti: usize, pj: usize, pane: &Pane, layout: &Layout, ctx: &PlanContext, s
     })
 }
 
-// Build the right-nested tree for one tab's pane list, tracking the region each
-// split divides so a fixed cell `size` can be resolved without asking herdr.
+// Build one tab's tree incrementally, in list order. The tree starts as pane 0's
+// leaf; each later pane j replaces the CURRENT leaf of the pane it splits -- the
+// one its `splitFrom` names, else pane j-1 -- with split(that leaf, leaf j).
+// Each leaf's region is tracked so a fixed cell `size` resolves against the
+// pane actually being split, without asking herdr. With no `splitFrom` this is
+// exactly the right-nested tree described at the top of the file.
 fn build_tab_tree(
     ti: usize,
     panes: &[Pane],
     layout: &Layout,
     ctx: &PlanContext,
     setup_command: Option<&str>,
-    pj: usize,
-    region: (f64, f64),
+    area: (f64, f64),
 ) -> Node {
-    let pane = &panes[pj];
-    let setup = if pane.setup { setup_command } else { None };
-    let node = leaf(ti, pj, pane, layout, ctx, setup);
-    let Some(next) = panes.get(pj + 1) else { return node };
+    let leaf_for = |pj: usize| {
+        let pane = &panes[pj];
+        leaf(ti, pj, pane, layout, ctx, if pane.setup { setup_command } else { None })
+    };
+    let mut root = leaf_for(0);
+    // regions[pj] is the area pane pj's leaf currently covers.
+    let mut regions = vec![area];
 
-    let direction = next.split.unwrap_or(Direction::Right);
-    let ratio = ratio_for(next, region, direction);
-    Node::Split {
-        direction,
-        ratio,
-        first: Box::new(node),
-        second: Box::new(build_tab_tree(
-            ti,
-            panes,
-            layout,
-            ctx,
-            setup_command,
-            pj + 1,
-            remaining(region, direction, ratio),
-        )),
+    for (pj, pane) in panes.iter().enumerate().skip(1) {
+        let target = split_target(panes, pj);
+        let direction = pane.split.unwrap_or(Direction::Right);
+        let ratio = ratio_for(pane, regions[target], direction);
+        let rest = remaining(regions[target], direction, ratio);
+        regions[target] = kept(regions[target], direction, ratio);
+        regions.push(rest);
+
+        let slot = find_leaf_mut(&mut root, &pane_handle(ti, target))
+            .expect("every earlier pane already has a leaf in the tree");
+        let first = slot.clone();
+        *slot = Node::Split { direction, ratio, first: Box::new(first), second: Box::new(leaf_for(pj)) };
+    }
+    root
+}
+
+// The pane that pane `pj` splits: the earlier pane its `splitFrom` names, or
+// the previous pane. Config validation guarantees the title names exactly one
+// earlier pane.
+fn split_target(panes: &[Pane], pj: usize) -> usize {
+    panes[pj]
+        .split_from
+        .as_deref()
+        .and_then(|title| panes[..pj].iter().position(|p| p.title.as_deref() == Some(title)))
+        .unwrap_or(pj - 1)
+}
+
+// What the split pane keeps after a split that gave it `ratio`.
+fn kept(region: (f64, f64), direction: Direction, ratio: f64) -> (f64, f64) {
+    match direction {
+        Direction::Right => (region.0 * ratio, region.1),
+        Direction::Down => (region.0, region.1 * ratio),
+    }
+}
+
+fn find_leaf_mut<'a>(node: &'a mut Node, handle: &str) -> Option<&'a mut Node> {
+    if matches!(node, Node::Pane(spec) if spec.handle == handle) {
+        return Some(node);
+    }
+    match node {
+        Node::Pane(_) => None,
+        Node::Split { first, second, .. } => {
+            find_leaf_mut(first, handle).or_else(|| find_leaf_mut(second, handle))
+        }
     }
 }
 
@@ -265,7 +307,7 @@ pub fn build_plan(layout: &Layout, ctx: &PlanContext) -> Plan {
         .map(|(ti, tab)| TabPlan {
             handle: tab_handle(ti),
             title: tab.title.clone(),
-            root: build_tab_tree(ti, &tab.panes, layout, ctx, setup_command, 0, area),
+            root: build_tab_tree(ti, &tab.panes, layout, ctx, setup_command, area),
         })
         .collect();
 
@@ -814,5 +856,196 @@ mod tests {
         assert_eq!(split_ratio_arg(None, Some(&Size::Cells(50)), Some(200.0)), Some(0.75));
         assert_eq!(split_ratio_arg(None, Some(&Size::Cells(300)), Some(200.0)), Some(0.01));
         assert_eq!(split_ratio_arg(None, Some(&Size::Cells(40)), None), None);
+    }
+
+    // --- splitFrom -----------------------------------------------------------
+
+    // The builder as it was before `splitFrom`: each later pane splits the one
+    // before it, recursing into a right-nested tree. Kept to prove the
+    // incremental builder produces the identical tree for every linear layout.
+    fn build_tab_tree_linear(
+        ti: usize,
+        panes: &[Pane],
+        layout: &Layout,
+        ctx: &PlanContext,
+        setup_command: Option<&str>,
+        pj: usize,
+        region: (f64, f64),
+    ) -> Node {
+        let pane = &panes[pj];
+        let setup = if pane.setup { setup_command } else { None };
+        let node = leaf(ti, pj, pane, layout, ctx, setup);
+        let Some(next) = panes.get(pj + 1) else { return node };
+
+        let direction = next.split.unwrap_or(Direction::Right);
+        let ratio = ratio_for(next, region, direction);
+        Node::Split {
+            direction,
+            ratio,
+            first: Box::new(node),
+            second: Box::new(build_tab_tree_linear(
+                ti,
+                panes,
+                layout,
+                ctx,
+                setup_command,
+                pj + 1,
+                remaining(region, direction, ratio),
+            )),
+        }
+    }
+
+    // A compact rendering of a tree by pane title, ratios to two places.
+    fn shape(node: &Node) -> String {
+        match node {
+            Node::Pane(spec) => spec.title.clone().unwrap_or_else(|| spec.handle.clone()),
+            Node::Split { direction, ratio, first, second } => {
+                format!("{}({:.2}, {}, {})", direction.as_str(), ratio, shape(first), shape(second))
+            }
+        }
+    }
+
+    fn ratio_of(node: &Node) -> f64 {
+        match node {
+            Node::Split { ratio, .. } => *ratio,
+            other => panic!("expected a split, got {:?}", other),
+        }
+    }
+
+    fn children(node: &Node) -> (&Node, &Node) {
+        match node {
+            Node::Split { first, second, .. } => (first, second),
+            other => panic!("expected a split, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn without_split_from_the_tree_matches_the_linear_builder_exactly() {
+        let linear_configs = [
+            "layouts:\n  - id: three\n    tabs:\n      - title: t\n        panes:\n          - title: a\n          - title: b\n            split: vertical\n          - title: c\n            split: horizontal",
+            "layouts:\n  - id: sized\n    tabs:\n      - title: t\n        panes:\n          - title: a\n          - title: b\n            split: vertical\n            size: 50\n          - title: c\n            split: vertical\n            size: 30\n          - title: d\n            split: horizontal\n            size: \"25%\"\n          - title: e\n            ratio: 0.6",
+        ];
+        let mut configs: Vec<Config> = linear_configs.iter().map(|t| parse(t)).collect();
+        configs.push(sample_config());
+        configs.push(parse(include_str!("../config.example.yml")));
+
+        let contexts = [ctx(Some("/work")), PlanContext { area: None, ..Default::default() }];
+        let mut compared = 0;
+        for config in &configs {
+            for layout in &config.layouts {
+                if layout.tabs.iter().flat_map(|t| &t.panes).any(|p| p.split_from.is_some()) {
+                    continue;
+                }
+                for ctx in &contexts {
+                    let plan = build_plan(layout, ctx);
+                    let setup_script = layout.setup.as_ref().map(|s| s.script());
+                    for (ti, tab) in layout.tabs.iter().enumerate() {
+                        let area = ctx.area.unwrap_or((0.0, 0.0));
+                        let old =
+                            build_tab_tree_linear(ti, &tab.panes, layout, ctx, setup_script.as_deref(), 0, area);
+                        assert_eq!(plan.tabs[ti].root, old, "layout {} tab {}", layout.id, ti);
+                        compared += 1;
+                    }
+                }
+            }
+        }
+        assert!(compared >= 20, "only compared {} trees", compared);
+    }
+
+    fn motivating_config() -> Config {
+        parse(
+            &[
+                "layouts:",
+                "  - id: columns",
+                "    tabs:",
+                "      - title: code",
+                "        panes:",
+                "          - title: editor",
+                "            command: nvim",
+                "          - title: agent",
+                "            agent: claude",
+                "            split: vertical",
+                "            size: \"70%\"",
+                "          - title: monitor",
+                "            command: htop",
+                "            split: vertical",
+                "            size: \"45%\"",
+                "          - title: system",
+                "            command: btop",
+                "            split: vertical",
+                "            size: \"50%\"",
+                "          - title: terminal",
+                "            split: horizontal",
+                "            size: \"50%\"",
+                "          - title: git",
+                "            command: lazygit",
+                "            splitFrom: monitor",
+                "            split: horizontal",
+                "            size: \"50%\"",
+            ]
+            .join("\n"),
+        )
+    }
+
+    #[test]
+    fn split_from_splits_the_named_earlier_pane_instead_of_the_previous_one() {
+        let config = motivating_config();
+        let plan = plan_of(&config, "columns", &ctx(None));
+        let root = &plan.tabs[0].root;
+        // agent | [monitor / git] | [system / terminal], beside the editor.
+        assert_eq!(
+            shape(root),
+            "right(0.30, editor, right(0.55, agent, right(0.50, \
+             down(0.50, monitor, git), down(0.50, system, terminal))))"
+        );
+
+        // Ratios straight from split_ratio_arg: a percent size p leaves the
+        // split pane 1 - p/100 of its own current region.
+        let (editor, rest) = children(root);
+        assert!(matches!(editor, Node::Pane(s) if s.handle == "t0p0"));
+        assert!((ratio_of(root) - 0.3).abs() < 1e-9);
+        let (_agent, rest2) = children(rest);
+        assert!((ratio_of(rest) - 0.55).abs() < 1e-9);
+        let (monitor_col, system_col) = children(rest2);
+        assert_eq!(ratio_of(rest2), 0.5);
+        assert_eq!(ratio_of(monitor_col), 0.5);
+        assert_eq!(ratio_of(system_col), 0.5);
+
+        // Handles stay list-indexed; tree order puts git (t0p5) right after
+        // the monitor it split, which is the order herdr echoes pane ids in.
+        assert_eq!(handles_in_tree_order(root), vec!["t0p0", "t0p1", "t0p2", "t0p5", "t0p3", "t0p4"]);
+        assert_eq!(pane_of(root, "t0p5").title.as_deref(), Some("git"));
+        assert_eq!(plan.agents.len(), 1);
+        assert_eq!(plan.agents[0].handle, "t0p1");
+    }
+
+    #[test]
+    fn a_split_from_cell_size_is_resolved_against_the_named_panes_current_region() {
+        let config = parse(
+            &[
+                "layouts:",
+                "  - id: sized",
+                "    tabs:",
+                "      - title: t",
+                "        panes:",
+                "          - title: a",
+                "          - title: b",
+                "            split: vertical",
+                "            size: 50",
+                "          - title: c",
+                "            splitFrom: a",
+                "            split: vertical",
+                "            size: 30",
+            ]
+            .join("\n"),
+        );
+        // 200 columns: b takes 50, so a keeps 150. c then splits a's 150 columns,
+        // not the whole tab (0.85) and not b's 50 (0.4): a keeps 120/150 = 0.8.
+        let plan = plan_of(&config, "sized", &ctx(None));
+        let root = &plan.tabs[0].root;
+        assert_eq!(shape(root), "right(0.75, right(0.80, a, c), b)");
+        let (a_split, _) = children(root);
+        assert!((ratio_of(a_split) - 0.8).abs() < 1e-9, "{}", ratio_of(a_split));
+        assert_eq!(handles_in_tree_order(root), vec!["t0p0", "t0p2", "t0p1"]);
     }
 }

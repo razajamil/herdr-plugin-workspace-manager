@@ -15,7 +15,8 @@
 #   - The FIRST tab replaces the worktree's existing tab.
 #   - Each later tab is appended to the workspace.
 #   - The FIRST pane of a tab is that tab's root pane; each later pane splits
-#     from the previous pane in the same tab.
+#     from the previous pane in the same tab -- or, with `splitFrom: <title>`,
+#     from the EARLIER pane with that title (see the `columns` layout below).
 #
 # pane.split direction:
 #   vertical   -> panes side by side       (herdr --direction right)  [default]
@@ -27,10 +28,11 @@
 #   40      -> fixed 40 cells (columns/rows)
 #   "30%"   -> 30% of the space being split
 #   0.3     -> a fraction, same as "30%"
-# A fixed cell size is converted against the tab's cell area; on a later window
-# resize herdr rebalances proportionally. (The legacy `ratio` field still works
-# but is the inverse -- the fraction the PREVIOUS pane keeps -- so prefer `size`.
-# A pane can't set both.)
+# A fixed cell size is converted against the region of the pane being split
+# (worked out from the tab's cell area); on a later window resize herdr
+# rebalances proportionally. (The legacy `ratio` field still works but is the
+# inverse -- the fraction the PREVIOUS pane (or the `splitFrom` pane) keeps --
+# so prefer `size`. A pane can't set both.)
 #
 # pane.command: runs in YOUR interactive login shell, so .zshrc/.bash_profile
 #   setup (mise, asdf, nvm, aliases, PATH) applies. When it exits you're left at
@@ -129,6 +131,37 @@ layouts:
             command: nvim
           - title: shell
             split: vertical
+
+  # splitFrom: editor | agent | [monitor / git] | [system / terminal]. Panes
+  # are listed in the order they're split; "git" goes back and splits
+  # "monitor" (by title) instead of the pane just before it, and its
+  # split/size apply to the monitor's column.
+  - id: columns
+    tabs:
+      - title: code
+        panes:
+          - title: editor
+            command: nvim
+          - title: agent
+            agent: claude
+            split: vertical
+            size: "70%"
+          - title: monitor
+            command: htop
+            split: vertical
+            size: "45%"
+          - title: system
+            command: btop
+            split: vertical
+            size: "50%"
+          - title: terminal
+            split: horizontal
+            size: "50%"
+          - title: git
+            command: lazygit
+            splitFrom: monitor
+            split: horizontal
+            size: "50%"
 
 # ---------------------------------------------------------------------------
 # workspaces: map a repo (or a worktree directory) to a layout.
